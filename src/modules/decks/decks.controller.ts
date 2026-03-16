@@ -60,7 +60,7 @@ export class DecksController {
     if (!token) {
       throw new UnauthorizedException('Missing token');
     }
-    
+
     try {
       this.jwtService.verify(token);
     } catch (error) {
@@ -69,17 +69,32 @@ export class DecksController {
 
     return interval(500).pipe(
       switchMap(async () => {
-        const jobs = await this.deckGenerationQueue.getJobs(['active', 'waiting', 'completed', 'failed']);
-        const job = jobs.find(j => j.data.deckId === id);
-        if (!job) {
-          return { data: { progress: 0, status: 'not_found' } };
+        const deck = await this.decksService.findOneForProgress(id);
+        const deckStatus = String(deck?.status || '').toLowerCase();
+
+        const jobs = await this.deckGenerationQueue.getJobs(['active', 'waiting', 'completed', 'failed', 'delayed']);
+        const job = jobs.find((j) => j.data.deckId === id);
+        const jobState = job ? await job.getState() : null;
+
+        if (deckStatus === 'ready') {
+          return { data: { progress: 100, status: 'completed', message: 'Deck generation complete!' } };
         }
-        const status = await job.getState();
+        if (deckStatus === 'failed') {
+          return { data: { progress: job?.progress?.() || 0, status: 'failed', message: 'Deck generation failed.' } };
+        }
+
+        const normalizedStatus =
+          jobState === 'completed' || jobState === 'failed'
+            ? jobState
+            : deckStatus === 'generating'
+              ? 'generating'
+              : (jobState || 'generating');
+
         return {
           data: {
-            progress: job.progress() || 0,
-            status,
-            message: `Generating deck...`,
+            progress: job?.progress?.() || 0,
+            status: normalizedStatus,
+            message: normalizedStatus === 'generating' ? 'Generating deck...' : `Deck status: ${normalizedStatus}`,
           },
         };
       }),

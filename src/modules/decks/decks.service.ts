@@ -107,6 +107,19 @@ export class DecksService {
     return deck;
   }
 
+  async findOneForProgress(id: string) {
+    const deck = await this.deckRepository.findOne({
+      where: { id },
+      relations: ['sermon', 'theme', 'slides'],
+    });
+
+    if (!deck) {
+      throw new NotFoundException('Deck not found');
+    }
+
+    return deck;
+  }
+
   async getSlides(id: string, churchId: string) {
     const deck = await this.findOne(id, churchId);
     return deck.slides.sort((a, b) => a.orderIndex - b.orderIndex);

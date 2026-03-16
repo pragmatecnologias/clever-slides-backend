@@ -15,6 +15,7 @@ interface SlideContent {
 
 interface PointRecord {
   title: string;
+  slideTitle?: string;
   summary?: string;
   subpoints: string[];
   supportingVerses: string[];
@@ -162,26 +163,184 @@ export class SimpleDeckGenerationService {
         title: this.t(sermon, 'Introduction', 'Introducción'),
         subtitle: typeof intro === 'string' ? this.asString(intro) : '',
       },
-      speakerNotes: typeof intro === 'string' ? intro : JSON.stringify(intro),
+      speakerNotes: typeof intro === 'string' ? this.asString(intro) : '',
       imagePrompt: `Opening scene for sermon about ${sermon.bigIdea}`,
     };
   }
 
   private generatePointSlide(sermon: Sermon, pointRecord: PointRecord, index: number): SlideContent {
-    const point = pointRecord.title || sermon.mainPoints[index] || `Point ${index + 1}`;
+    const fullTitle = pointRecord.title || sermon.mainPoints[index] || `Point ${index + 1}`;
     const bullets = this.buildPointBullets(pointRecord);
-    const speakerNotes = this.buildPointSpeakerNotes(sermon, pointRecord, index, point);
+    const speakerNotes = this.buildPointSpeakerNotes(sermon, pointRecord, index, fullTitle);
+
+    // Use slideTitle from LLM if available, otherwise fall back to extractShortTitle
+    const slideTitle = pointRecord.slideTitle || this.extractShortTitle(fullTitle);
+    const titleWithNumber = `${index + 1}. ${slideTitle}`;
+
+    // Always include the full point as first bullet if slideTitle differs
+    let finalBullets = [...bullets];
+    if (slideTitle !== fullTitle) {
+      // Add full point description as first bullet only when not already represented.
+      const fullTitleBullet = this.limitText(fullTitle, 80);
+      if (!this.hasEquivalentBullet(finalBullets, fullTitleBullet)) {
+        finalBullets = [fullTitleBullet, ...bullets];
+      }
+    }
+    if (finalBullets.length < 2) {
+      finalBullets = this.uniqueClean([
+        ...finalBullets,
+        ...this.buildFallbackPointBullets(sermon, pointRecord, fullTitle),
+      ]).slice(0, 4);
+    }
+    finalBullets = this.dedupeSemanticBullets(finalBullets).slice(0, 4);
 
     return {
       type: SlideType.POINT,
       layoutKey: 'point_bullets_v1',
       content: {
-        title: `${index + 1}. ${this.limitText(point, 68)}`,
-        bullets: bullets.length > 0 ? bullets : [this.limitText(point, 100)],
+        title: titleWithNumber,
+        bullets: finalBullets.length > 0 ? finalBullets.slice(0, 4) : [this.limitText(fullTitle, 80)],
       },
       speakerNotes,
-      imagePrompt: `Visual representation of: ${point}`,
+      imagePrompt: `Visual representation of: ${fullTitle}`,
     };
+  }
+
+  private buildFallbackPointBullets(sermon: Sermon, point: PointRecord, fullTitle: string): string[] {
+    const isSpanish = this.isSpanishWorkspace(sermon);
+    const candidates = this.uniqueClean([
+      point.summary && !this.hasEquivalentBullet([fullTitle], point.summary)
+        ? this.limitText(this.asString(point.summary), 70)
+        : '',
+      point.subpoints[0] ? this.limitText(this.asString(point.subpoints[0]), 70) : '',
+      this.asString(sermon.bigIdea)
+        ? this.limitText(
+            `${isSpanish ? 'Idea central' : 'Big idea'}: ${this.asString(sermon.bigIdea)}`,
+            70,
+          )
+        : '',
+      point.supportingVerses[0]
+        ? this.limitText(`${isSpanish ? 'Texto clave' : 'Key text'}: ${point.supportingVerses[0]}`, 70)
+        : '',
+      point.applications[0]
+        ? this.limitText(`${isSpanish ? 'Aplicación' : 'Application'}: ${this.asString(point.applications[0])}`, 70)
+        : '',
+      point.questions[0]
+        ? this.limitText(`${isSpanish ? 'Pregunta' : 'Question'}: ${this.asString(point.questions[0])}`, 70)
+        : '',
+      point.illustrations[0]
+        ? this.limitText(`${isSpanish ? 'Ilustración' : 'Illustration'}: ${this.asString(point.illustrations[0])}`, 70)
+        : '',
+      this.limitText(
+        isSpanish
+          ? `Responder con fe a la verdad de ${sermon.mainScriptureRef || 'este pasaje'}`
+          : `Respond in faith to the truth of ${sermon.mainScriptureRef || 'this passage'}`,
+        70,
+      ),
+    ]);
+
+    return this.dedupeSemanticBullets(candidates).slice(0, 3);
+  }
+
+  private shortenTitle(text: string, maxLength: number): string {
+    const clean = this.asString(text);
+    if (clean.length <= maxLength) return clean;
+
+    // Try to find a natural break point (colon, dash, comma)
+    const breakChars = [':', '–', '-', ','];
+    for (const char of breakChars) {
+      const idx = clean.indexOf(char);
+      if (idx > 0 && idx <= maxLength) {
+        return clean.slice(0, idx).trim();
+      }
+    }
+
+    // Otherwise truncate at word boundary
+    const truncated = clean.slice(0, maxLength);
+    const lastSpace = truncated.lastIndexOf(' ');
+    if (lastSpace > maxLength * 0.5) {
+      return truncated.slice(0, lastSpace).trim();
+    }
+
+    return truncated.trim();
+  }
+
+  // Extract a short, punchy title from a longer point description
+  private extractShortTitle(fullPoint: string): string {
+    const clean = this.asString(fullPoint)
+      .replace(/^[\d\.\-\)\s]+/, '')
+      .replace(/[,:;]+$/g, '')
+      .trim();
+    if (!clean) return 'Point';
+    if (clean.length <= 25) return clean;
+
+    const lowered = clean.toLowerCase();
+    const isSpanish = this.isLikelySpanish(clean);
+
+    const phraseRules: Array<{ test: RegExp; value: string }> = isSpanish
+      ? [
+          { test: /muerte espiritual/, value: 'Muerte espiritual' },
+          { test: /separaci[oó]n del padre/, value: 'Lejos del Padre' },
+          { test: /antes de cristo|sin cristo/, value: 'Sin Cristo' },
+          { test: /gracia divina|gracia de dios|gracia de cristo/, value: 'Gracia divina' },
+          { test: /nueva vida|vida nueva/, value: 'Nueva vida' },
+          { test: /santidad.*testig|testig.*santidad/, value: 'Santidad y testimonio' },
+          { test: /vivir con santidad/, value: 'Vida en santidad' },
+          { test: /testigos? de la gracia|testimonio/, value: 'Testigos de gracia' },
+          { test: /obedien/, value: 'Obediencia viva' },
+          { test: /esperanza/, value: 'Esperanza viva' },
+          { test: /restauraci[oó]n|transformaci[oó]n/, value: 'Vida transformada' },
+        ]
+      : [
+          { test: /spiritual death/, value: 'Spiritual Death' },
+          { test: /separated from the father|far from god/, value: 'Far From God' },
+          { test: /before christ|without christ/, value: 'Without Christ' },
+          { test: /divine grace|grace of god|grace of christ/, value: 'Divine Grace' },
+          { test: /new life/, value: 'New Life' },
+          { test: /holiness.*witness|witness.*holiness/, value: 'Holiness and Witness' },
+          { test: /live in holiness/, value: 'Life in Holiness' },
+          { test: /witness/, value: 'Faithful Witness' },
+          { test: /obedien/, value: 'Living Obedience' },
+          { test: /hope/, value: 'Living Hope' },
+          { test: /restoration|transformation/, value: 'Transformed Life' },
+        ];
+
+    const matched = phraseRules.find((rule) => rule.test.test(lowered));
+    if (matched) {
+      return matched.value;
+    }
+
+    const compact = clean
+      .replace(/\b(?:esta|este|estos|estas|that|this)\b/gi, '')
+      .replace(/\b(?:transformaci[oó]n|llama a|nos llama a|we are called to|called to)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const phraseMatches = compact.match(
+      isSpanish
+        ? /\b([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+(?:de|del|y)\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+){0,2})\b/g
+        : /\b([A-Za-z]+(?:\s+(?:of|and)\s+[A-Za-z]+){0,2})\b/g,
+    ) || [];
+
+    const stopwords = new Set(
+      (isSpanish
+        ? ['la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas', 'de', 'del', 'en', 'a', 'y', 'o', 'que', 'se', 'nos', 'como', 'para', 'con', 'sin', 'por', 'esta', 'este', 'estas', 'estos', 'vivir', 'sirve', 'servir', 'llama']
+        : ['the', 'a', 'an', 'of', 'in', 'to', 'and', 'or', 'that', 'we', 'are', 'for', 'with', 'without', 'this', 'these', 'those', 'called', 'live', 'living', 'serve']) as string[],
+    );
+
+    const candidate = phraseMatches
+      .map((item) => item.trim())
+      .find((item) => {
+        const words = item.split(/\s+/).filter(Boolean);
+        const contentWords = words.filter((word) => !stopwords.has(word.toLowerCase()));
+        return contentWords.length >= 2 && item.length <= 28;
+      });
+
+    if (candidate) {
+      return candidate.replace(/[,:;]+$/g, '').trim();
+    }
+
+    return this.shortenTitle(clean, 25).replace(/[,:;]+$/g, '').trim();
   }
 
   private generateApplicationSlide(
@@ -303,11 +462,27 @@ export class SimpleDeckGenerationService {
     const outlineStructure = sermon.outline?.structure || {};
     const pointNodes = Array.isArray(outlineStructure.pointNodes) ? outlineStructure.pointNodes : [];
     const legacyPoints = Array.isArray(outlineStructure.points) ? outlineStructure.points : [];
-    const pointsSource = pointNodes.length ? pointNodes : legacyPoints;
+    const pointsSource = legacyPoints.length ? legacyPoints : pointNodes;
 
-    const records = pointsSource.map((rawPoint: any, index: number) =>
-      this.normalizePointRecord(rawPoint, index, sermon.mainPoints?.[index]),
-    );
+    // Debug: log slideTitle presence
+    this.logger.log(`Building point records from ${pointNodes.length} pointNodes`);
+    pointNodes.forEach((node: any, i: number) => {
+      this.logger.log(`Point ${i}: title="${node?.title?.substring(0, 40)}", slideTitle="${node?.slideTitle || 'MISSING'}"`);
+    });
+
+    const records = pointsSource.map((rawPoint: any, index: number) => {
+      const alignedNode = pointNodes[index];
+      const mergedPoint =
+        alignedNode && typeof alignedNode === 'object'
+          ? {
+              ...alignedNode,
+              title:
+                (typeof rawPoint === 'string' ? rawPoint : (rawPoint?.title || rawPoint?.content || rawPoint?.name)) ||
+                alignedNode?.title,
+            }
+          : rawPoint;
+      return this.normalizePointRecord(mergedPoint, index, sermon.mainPoints?.[index]);
+    });
 
     if (records.length > 0) return records;
 
@@ -328,6 +503,7 @@ export class SimpleDeckGenerationService {
 
     return {
       title,
+      slideTitle: this.asString(point?.slideTitle),
       summary: this.asString(point?.summary) || this.asString(point?.preachingInsight),
       subpoints: this.toStringArray(point?.subpoints || point?.bullets),
       supportingVerses: this.toStringArray(point?.supportingVerses || point?.crossReferences),
@@ -343,16 +519,28 @@ export class SimpleDeckGenerationService {
       [point.title, point.summary, ...point.subpoints, ...point.applications].filter(Boolean).join(' ')
     );
     const bullets: string[] = [];
-    if (point.summary) bullets.push(this.asString(point.summary));
-    bullets.push(...point.subpoints.map((item) => this.asString(item)));
+    
+    // Limit each bullet to 70 chars for readability
+    const maxBulletLen = 70;
+    
+    if (point.summary && !this.hasEquivalentBullet([point.title], point.summary)) {
+      bullets.push(this.limitText(this.asString(point.summary), maxBulletLen));
+    }
+    bullets.push(
+      ...point.subpoints
+        .map((item) => this.limitText(this.asString(item), maxBulletLen))
+        .filter((item) => !this.hasEquivalentBullet([point.title, point.summary || ''], item)),
+    );
     if (point.supportingVerses.length > 0) {
-      bullets.push(`${isSpanish ? 'Textos clave' : 'Key texts'}: ${point.supportingVerses.slice(0, 2).join(', ')}`);
+      const versesText = point.supportingVerses.slice(0, 2).join(', ');
+      bullets.push(this.limitText(`${isSpanish ? 'Textos clave' : 'Key texts'}: ${versesText}`, maxBulletLen));
     }
     if (point.applications.length > 0) {
-      bullets.push(`${isSpanish ? 'Aplicación' : 'Application'}: ${this.asString(point.applications[0])}`);
+      const appText = this.asString(point.applications[0]);
+      bullets.push(this.limitText(`${isSpanish ? 'Aplicación' : 'Application'}: ${appText}`, maxBulletLen));
     }
 
-    return this.uniqueClean(bullets).slice(0, 5);
+    return this.dedupeSemanticBullets(this.uniqueClean(bullets)).slice(0, 4);
   }
 
   private buildPointSpeakerNotes(
@@ -540,7 +728,37 @@ export class SimpleDeckGenerationService {
 
   private asString(value: any): string {
     if (typeof value !== 'string') return '';
-    return value.replace(/\s+/g, ' ').trim();
+    // Strip HTML tags and clean up whitespace
+    return this.stripHtml(value).replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Strip HTML tags from text content
+   * Handles common HTML elements and data attributes from sermon editor
+   */
+  private stripHtml(text: string): string {
+    if (!text || typeof text !== 'string') return '';
+    
+    // Remove HTML tags completely
+    let clean = text
+      // Remove script/style tags and their content
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      // Remove all HTML tags
+      .replace(/<[^>]+>/g, ' ')
+      // Decode common HTML entities
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/&apos;/gi, "'")
+      // Clean up multiple spaces
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    return clean;
   }
 
   private uniqueClean(lines: string[]): string[] {
@@ -555,6 +773,55 @@ export class SimpleDeckGenerationService {
       output.push(normalized);
     }
     return output;
+  }
+
+  private hasEquivalentBullet(lines: string[], candidate: string): boolean {
+    const candidateKey = this.semanticKey(candidate);
+    if (!candidateKey) return false;
+    return lines.some((line) => this.semanticKey(line) === candidateKey);
+  }
+
+  private dedupeSemanticBullets(lines: string[]): string[] {
+    const output: string[] = [];
+    const keys: string[] = [];
+    for (const line of lines) {
+      const normalized = this.asString(line);
+      if (!normalized) continue;
+      const key = this.semanticKey(normalized);
+      if (!key) continue;
+
+      let duplicateIndex = -1;
+      for (let i = 0; i < keys.length; i += 1) {
+        const existing = keys[i];
+        if (existing === key) {
+          duplicateIndex = i;
+          break;
+        }
+      }
+
+      if (duplicateIndex >= 0) {
+        if (normalized.length > output[duplicateIndex].length) {
+          output[duplicateIndex] = normalized;
+          keys[duplicateIndex] = key;
+        }
+        continue;
+      }
+
+      output.push(normalized);
+      keys.push(key);
+    }
+    return output;
+  }
+
+  private semanticKey(value: string): string {
+    return this.asString(value)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/^(textos?\s+clave|key\s+texts?|aplicacion|application|pregunta|question|ilustracion|illustration)\s*:\s*/i, '')
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private limitText(value: string, maxLength: number): string {
