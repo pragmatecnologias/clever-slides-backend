@@ -35,7 +35,7 @@ export class SocialHtmlRendererService {
     const width = Math.max(320, Number(social.width || 1080));
     const height = Math.max(320, Number(social.height || 1080));
     const templateKey = this.resolveTemplateKey(overlay, width, height);
-    const templateVersion = 'v2';
+    const templateVersion = 'v3';
 
     const [backgroundDataUrl, logoDataUrl] = await Promise.all([
       this.fileToDataUrl(input.baseImagePath, this.mimeFromExt(input.baseImagePath)),
@@ -95,12 +95,12 @@ export class SocialHtmlRendererService {
     const explicit = String(overlay.layoutVariant || '').toLowerCase().trim();
     if (explicit) {
       const legacyMap: Record<string, string> = {
-        story_focus: 'ig-story-v2',
-        story_split: 'wa-status-v2',
-        feed_balanced: 'ig-feed-v2',
-        wide_banner: 'facebook-v2',
-        wide_banner_x: 'x-v2',
-        promo_card: 'square-v2',
+        story_focus: 'ig-story-v3',
+        story_split: 'wa-status-v3',
+        feed_balanced: 'ig-feed-v3',
+        wide_banner: 'facebook-v3',
+        wide_banner_x: 'x-v3',
+        promo_card: 'square-v3',
       };
       return legacyMap[explicit] || explicit;
     }
@@ -109,30 +109,28 @@ export class SocialHtmlRendererService {
     const variant = String(overlay.variant || '').toLowerCase();
     const ratio = width / Math.max(1, height);
 
-    if (platform === 'instagram' && variant === 'post') return 'ig-feed-v2';
-    if (platform === 'instagram' && variant === 'story') return 'ig-story-v2';
-    if (platform === 'whatsapp' && variant === 'status') return 'wa-status-v2';
-    if (platform === 'facebook' && variant === 'post') return 'facebook-v2';
-    if (platform === 'youtube' && variant === 'thumbnail') return 'youtube-v2';
-    if (platform === 'x' && variant === 'post') return 'x-v2';
-    if (ratio >= 1.6) return 'wide-v2';
-    if (ratio <= 0.62) return 'story-v2';
-    return 'square-v2';
+    if (platform === 'instagram' && variant === 'post') return 'ig-feed-v3';
+    if (platform === 'instagram' && variant === 'story') return 'ig-story-v3';
+    if (platform === 'whatsapp' && variant === 'status') return 'wa-status-v3';
+    if (platform === 'facebook' && variant === 'post') return 'facebook-v3';
+    if (platform === 'youtube' && variant === 'thumbnail') return 'youtube-v3';
+    if (platform === 'x' && variant === 'post') return 'x-v3';
+    if (ratio >= 1.6) return 'wide-v3';
+    if (ratio <= 0.62) return 'story-v3';
+    return 'square-v3';
   }
 
   private buildMetaLines(overlay: Record<string, any>, templateKey: string): string[] {
     const lines: string[] = [];
-    if (overlay.showServiceTime) {
-      const dateTime = String(overlay.resolvedDateTimeText || '').trim()
-        || [overlay.serviceDate, overlay.serviceTime, overlay.timezone].filter(Boolean).join(' · ');
-      if (dateTime) lines.push(dateTime);
-    }
-    if (overlay.showAddress && overlay.location) lines.push(String(overlay.location));
-    if (overlay.showWebsite && overlay.website) lines.push(String(overlay.website));
-    if (overlay.showPhone && overlay.phone) lines.push(String(overlay.phone));
+    const dateTime = String(overlay.resolvedDateTimeText || '').trim()
+      || [overlay.serviceDate, overlay.serviceTime, overlay.timezone].filter(Boolean).join(' · ');
+    if (dateTime) lines.push(dateTime);
+    if (overlay.locationOverride) lines.push(String(overlay.locationOverride));
+    else if (overlay.location) lines.push(String(overlay.location));
+    if (overlay.website) lines.push(String(overlay.website));
     if (overlay.hashtags) lines.push(String(overlay.hashtags));
 
-    const compact = ['ig-feed-v2', 'ig-story-v2', 'wa-status-v2'];
+    const compact = ['ig-feed-v3', 'ig-story-v3', 'wa-status-v3'];
     const max = compact.includes(templateKey) ? 4 : 6;
     return lines
       .map((line) => line.replace(/\s+/g, ' ').trim())
@@ -153,332 +151,810 @@ export class SocialHtmlRendererService {
     churchName: string;
     metaLines: string[];
   }): string {
-    const {
-      width,
-      height,
-      templateKey,
-      backgroundDataUrl,
-      logoDataUrl,
-      title,
-      subtitle,
-      body,
-      invitation,
-      churchName,
-      metaLines,
-    } = input;
+    const { templateKey } = input;
+    if (templateKey.startsWith('ig-feed')) return this.buildInstagramFeed(input);
+    if (templateKey.startsWith('ig-story')) return this.buildInstagramStory(input);
+    if (templateKey.startsWith('youtube')) return this.buildYouTubeThumbnail(input);
+    if (templateKey.startsWith('facebook')) return this.buildFacebookPost(input);
+    if (templateKey.startsWith('wa-status')) return this.buildWhatsAppStatus(input);
+    if (templateKey.startsWith('x-')) return this.buildXPost(input);
+    return this.buildGenericTemplate(input);
+  }
 
-    const metaHtml = metaLines
-      .map((line) => `<div class="meta-line">${this.escapeHtml(line)}</div>`)
-      .join('');
-    const logoHtml = logoDataUrl
-      ? `<img class="brand-logo" src="${logoDataUrl}" alt="logo" />`
-      : `<div class="brand-logo brand-logo--empty"></div>`;
-
-    return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <style>
-    * { box-sizing: border-box; }
+  private getBaseStyles(width: number, height: number, backgroundDataUrl: string): string {
+    return `
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800;900&family=Inter:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
-      margin: 0;
       width: ${width}px;
       height: ${height}px;
       overflow: hidden;
-      font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     body {
-      background-image:
-        linear-gradient(180deg, rgba(2,8,20,.10) 0%, rgba(2,8,20,.54) 100%),
-        url('${backgroundDataUrl}');
-      background-size: cover;
-      background-position: center center;
-      color: #f8fafc;
+      background: url('${backgroundDataUrl}') center/cover no-repeat;
+      color: #ffffff;
+      position: relative;
     }
-    .root {
+    body::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.7) 100%);
+      z-index: 1;
+    }
+    .noise {
+      position: absolute;
+      inset: 0;
+      opacity: 0.03;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      z-index: 2;
+      pointer-events: none;
+    }
+    .container {
+      position: relative;
+      z-index: 10;
       width: 100%;
       height: 100%;
-      padding: clamp(20px, 3.4vw, 50px);
       display: flex;
       flex-direction: column;
-      gap: clamp(10px, 1.4vh, 20px);
     }
-    .brand {
+    .title-text {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      text-shadow: 0 4px 30px rgba(0,0,0,0.5);
+    }
+    .subtitle-text {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+    .body-text {
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      line-height: 1.4;
+      color: rgba(255,255,255,0.9);
+    }
+    .meta-text {
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      color: rgba(255,255,255,0.75);
+    }
+    `;
+  }
+
+  private buildInstagramFeed(input: {
+    width: number;
+    height: number;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const hashtagsLine = metaLines.find(l => l.includes('#')) || '';
+    const otherMeta = metaLines.filter(l => !l.includes('#')).slice(0, 2);
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.4) 50%, rgba(0,0,0,0.88) 100%);
+    }
+    .ig-accent {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 6px;
+      background: linear-gradient(90deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888);
+      z-index: 20;
+    }
+    .decorative-line {
+      position: absolute;
+      left: 55px;
+      top: 180px;
+      bottom: 280px;
+      width: 4px;
+      background: linear-gradient(180deg, rgba(251,191,36,0.8) 0%, rgba(251,191,36,0.1) 100%);
+      border-radius: 2px;
+      z-index: 15;
+    }
+    .brand-row {
       display: flex;
       align-items: center;
-      gap: clamp(8px, 1.2vw, 14px);
-      min-height: clamp(34px, 5vh, 68px);
-      z-index: 2;
+      gap: 16px;
+      padding: 45px 55px 0;
     }
-    .brand-logo {
-      width: clamp(34px, 6vw, 78px);
-      height: clamp(34px, 6vw, 78px);
+    .logo {
+      width: 60px;
+      height: 60px;
       object-fit: contain;
-      opacity: .95;
-      flex: 0 0 auto;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.3);
     }
-    .brand-logo--empty { display: none; }
     .brand-name {
+      font-family: 'Montserrat', sans-serif;
       font-weight: 600;
-      font-size: clamp(15px, 1.65vw, 28px);
-      letter-spacing: .01em;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 95%;
-      text-shadow: 0 2px 8px rgba(0,0,0,.35);
+      font-size: 22px;
+      color: rgba(255,255,255,0.9);
+      letter-spacing: 0.02em;
     }
-
-    .card {
-      width: 100%;
-      border-radius: clamp(12px, 1.3vw, 20px);
-      border: 1px solid rgba(255,255,255,.10);
-      background: rgba(2, 8, 20, 0.62);
-      overflow: hidden;
-      display: grid;
-      grid-template-rows: auto auto;
-      align-self: center;
-    }
-    .main {
-      padding: clamp(14px, 1.9vw, 28px);
+    .main-content {
+      flex: 1;
       display: flex;
       flex-direction: column;
-      gap: clamp(8px, 1vh, 14px);
-      background: linear-gradient(180deg, rgba(30,64,175,.20) 0%, rgba(2,8,20,.08) 100%);
-      min-height: 0;
+      justify-content: center;
+      padding: 60px 55px 60px 80px;
     }
-    .text-stack {
-      display: flex;
-      flex-direction: column;
-      gap: clamp(8px, 1vh, 14px);
-      min-height: 0;
+    .title-text {
+      font-size: 78px;
+      margin-bottom: 24px;
+      line-height: 1.0;
     }
-    .title {
-      margin: 0;
-      font-size: clamp(24px, 3.8vw, 56px);
-      line-height: 1.08;
-      font-weight: 800;
-      letter-spacing: -.01em;
-      overflow-wrap: anywhere;
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 3;
-      overflow: hidden;
-    }
-    .subtitle {
-      margin: 0;
-      font-size: clamp(17px, 2vw, 30px);
-      line-height: 1.12;
-      font-weight: 700;
+    .subtitle-text {
+      font-size: 36px;
       color: #fbbf24;
-      overflow-wrap: anywhere;
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
-      overflow: hidden;
+      margin-bottom: 32px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
     }
-    .body {
-      font-size: clamp(18px, 2.2vw, 34px);
-      line-height: 1.18;
-      font-weight: 500;
-      color: #e2e8f0;
-      overflow-wrap: anywhere;
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 5;
-      overflow: hidden;
+    .body-text {
+      font-size: 30px;
+      line-height: 1.45;
+      color: rgba(255,255,255,0.92);
+      max-width: 95%;
     }
-    .invitation {
-      font-size: clamp(15px, 1.65vw, 24px);
-      line-height: 1.28;
-      font-weight: 500;
-      color: #d1d5db;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-      white-space: pre-wrap;
+    .bottom-section {
+      padding: 40px 55px 50px 80px;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 100%);
     }
-    .meta {
-      padding: clamp(10px, 1.2vw, 18px) clamp(14px, 1.7vw, 24px);
-      border-top: 1px solid rgba(255,255,255,.08);
-      background: rgba(2,8,20,.54);
-      display: grid;
-      gap: clamp(2px, .45vw, 8px);
-      font-size: clamp(13px, 1.15vw, 18px);
-      line-height: 1.25;
-      color: #cbd5e1;
+    .invitation-text {
+      font-size: 26px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      line-height: 1.4;
+      color: rgba(255,255,255,0.95);
     }
-    .meta-line {
-      white-space: normal;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-      display: block;
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 24px;
+      font-size: 20px;
+      color: rgba(255,255,255,0.7);
     }
-
-    .card.ig-feed-v2 {
-      width: min(94%, 1020px);
-      margin-top: clamp(8px, 1.4vh, 18px);
-      height: min(84%, 1460px);
-      grid-template-rows: 1fr auto;
+    .meta-row span {
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    .card.ig-feed-v2 .title { -webkit-line-clamp: 2; font-size: clamp(26px, 3.7vw, 56px); }
-    .card.ig-feed-v2 .body { -webkit-line-clamp: 5; }
-    .card.ig-feed-v2 .main {
-      justify-content: space-between;
+    .meta-row span::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      background: #fbbf24;
+      border-radius: 50%;
     }
-    .card.ig-feed-v2 .invitation {
-      font-size: clamp(17px, 2vw, 30px);
+    .hashtags {
+      margin-top: 16px;
+      font-size: 18px;
+      color: rgba(255,255,255,0.5);
     }
-
-    .card.ig-story-v2,
-    .card.wa-status-v2 {
-      width: min(92%, 980px);
-      margin-top: clamp(14px, 2.5vh, 26px);
-      height: min(86%, 1820px);
-      grid-template-rows: 1fr auto;
-    }
-    .card.ig-story-v2 .title,
-    .card.wa-status-v2 .title {
-      font-size: clamp(32px, 5.2vw, 68px);
-      -webkit-line-clamp: 3;
-    }
-    .card.ig-story-v2 .body,
-    .card.wa-status-v2 .body {
-      font-size: clamp(21px, 3vw, 40px);
-      -webkit-line-clamp: 6;
-    }
-    .card.ig-story-v2 .main,
-    .card.wa-status-v2 .main {
-      justify-content: space-between;
-    }
-    .card.ig-story-v2 .invitation,
-    .card.wa-status-v2 .invitation {
-      font-size: clamp(18px, 2.2vw, 32px);
-      line-height: 1.33;
-    }
-    .card.wa-status-v2 .main {
-      background: linear-gradient(180deg, rgba(22,163,74,.18) 0%, rgba(2,8,20,.10) 100%);
-    }
-
-    .card.facebook-v2,
-    .card.x-v2,
-    .card.youtube-v2,
-    .card.wide-v2 {
-      width: min(96%, 1550px);
-      margin-top: clamp(4px, .8vh, 12px);
-    }
-
-    .card.facebook-v2 {
-      grid-template-rows: 1fr auto;
-      height: min(82%, 620px);
-    }
-    .card.facebook-v2 .title {
-      font-size: clamp(24px, 2.95vw, 44px);
-      -webkit-line-clamp: 2;
-    }
-    .card.facebook-v2 .body {
-      font-size: clamp(18px, 1.9vw, 28px);
-      -webkit-line-clamp: 4;
-    }
-    .card.facebook-v2 .main {
-      justify-content: space-between;
-    }
-    .card.facebook-v2 .invitation {
-      font-size: clamp(17px, 1.7vw, 25px);
-    }
-    .card.facebook-v2 .meta {
-      background: rgba(2,8,20,.46);
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: clamp(2px, .5vw, 8px) clamp(12px, 1.3vw, 20px);
-    }
-
-    .card.x-v2 {
-      grid-template-columns: minmax(0, 1.35fr) minmax(260px, .9fr);
-      grid-template-rows: auto;
-      min-height: min(78%, 540px);
-    }
-    .card.x-v2 .main {
-      border-right: 1px solid rgba(255,255,255,.10);
-      background: linear-gradient(180deg, rgba(56,189,248,.15) 0%, rgba(2,8,20,.10) 100%);
-    }
-    .card.x-v2 .title {
-      font-size: clamp(23px, 2.6vw, 40px);
-      -webkit-line-clamp: 2;
-    }
-    .card.x-v2 .body {
-      font-size: clamp(17px, 1.6vw, 24px);
-      -webkit-line-clamp: 3;
-    }
-    .card.x-v2 .invitation {
-      font-size: clamp(15px, 1.3vw, 20px);
-      line-height: 1.28;
-    }
-    .card.x-v2 .meta {
-      border-top: none;
-      background: rgba(2,8,20,.62);
-      align-content: start;
-      font-size: clamp(14px, 1.1vw, 16px);
-    }
-
-    .card.youtube-v2 .title {
-      font-size: clamp(25px, 3.2vw, 52px);
-      -webkit-line-clamp: 2;
-    }
-    .card.youtube-v2 .body {
-      font-size: clamp(15px, 1.7vw, 26px);
-      -webkit-line-clamp: 3;
-    }
-    .card.youtube-v2 .main {
-      justify-content: space-between;
-    }
-
-    .card.story-v2 {
-      width: min(92%, 980px);
-      height: min(86%, 1820px);
-      grid-template-rows: 1fr auto;
-    }
-    .card.story-v2 .main {
-      justify-content: space-between;
-    }
-
-    .card.square-v2 {
-      width: min(94%, 1040px);
-      height: min(84%, 1040px);
-      grid-template-rows: 1fr auto;
-    }
-    .card.square-v2 .main {
-      justify-content: space-between;
-    }
-
-    .card.wide-v2 {
-      height: min(82%, 620px);
-      grid-template-rows: 1fr auto;
-    }
-    .card.wide-v2 .main {
-      justify-content: space-between;
-    }
-  </style>
-</head>
-<body>
-  <div class="root">
-    <div class="brand">
-      ${logoHtml}
-      <div class="brand-name">${this.escapeHtml(churchName)}</div>
-    </div>
-
-    <section class="card ${templateKey}">
-      <div class="main">
-        <div class="text-stack">
-          <h1 class="title">${this.escapeHtml(title)}</h1>
-          ${subtitle ? `<div class="subtitle">${this.escapeHtml(subtitle)}</div>` : ''}
-          ${body ? `<div class="body">${this.escapeHtml(body)}</div>` : ''}
-        </div>
-        ${invitation ? `<div class="invitation">${this.escapeHtml(invitation)}</div>` : ''}
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="ig-accent"></div>
+    <div class="decorative-line"></div>
+    <div class="container">
+      <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <div class="main-content">
+        <h1 class="title-text">${this.escapeHtml(title)}</h1>
+        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
       </div>
-      <div class="meta">${metaHtml}</div>
-    </section>
-  </div>
-</body>
-</html>`;
+      <div class="bottom-section">
+        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+        <div class="meta-row">${otherMeta.map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+        ${hashtagsLine ? `<div class="hashtags">${this.escapeHtml(hashtagsLine)}</div>` : ''}
+      </div>
+    </div>
+    </body></html>`;
+  }
+
+  private buildInstagramStory(input: {
+    width: number;
+    height: number;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.1) 30%, rgba(0,0,0,0.5) 70%, rgba(0,0,0,0.88) 100%);
+    }
+    .top-section {
+      padding: 80px 55px 0;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .logo {
+      width: 65px;
+      height: 65px;
+      object-fit: contain;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.4);
+    }
+    .brand-name {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 600;
+      font-size: 28px;
+      color: rgba(255,255,255,0.95);
+    }
+    .center-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 80px 55px;
+    }
+    .title-text {
+      font-size: 96px;
+      margin-bottom: 40px;
+      line-height: 1.0;
+    }
+    .divider {
+      width: 80px;
+      height: 4px;
+      background: linear-gradient(90deg, transparent, #fbbf24, transparent);
+      margin-bottom: 45px;
+    }
+    .subtitle-text {
+      font-size: 52px;
+      color: #fbbf24;
+      margin-bottom: 50px;
+      font-weight: 700;
+    }
+    .body-text {
+      font-size: 40px;
+      line-height: 1.5;
+      max-width: 92%;
+      color: rgba(255,255,255,0.92);
+    }
+    .bottom-section {
+      padding: 60px 55px 90px;
+      text-align: center;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 100%);
+    }
+    .invitation-text {
+      font-size: 36px;
+      font-weight: 600;
+      margin-bottom: 35px;
+      line-height: 1.4;
+      color: rgba(255,255,255,0.95);
+    }
+    .meta-row {
+      font-size: 28px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      color: rgba(255,255,255,0.75);
+    }
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="container">
+      <div class="top-section">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <div class="center-content">
+        <h1 class="title-text">${this.escapeHtml(title)}</h1>
+        <div class="divider"></div>
+        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+      </div>
+      <div class="bottom-section">
+        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+        <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+      </div>
+    </div>
+    </body></html>`;
+  }
+
+  private buildYouTubeThumbnail(input: {
+    width: number;
+    height: number;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, churchName } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(90deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.5) 60%, rgba(0,0,0,0.2) 100%);
+    }
+    .yt-accent {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 8px;
+      background: #FF0000;
+      z-index: 20;
+    }
+    .content-wrapper {
+      position: absolute;
+      inset: 0;
+      padding: 45px 50px 45px 55px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      z-index: 10;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .logo {
+      width: 55px;
+      height: 55px;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+    .brand-name {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 600;
+      font-size: 24px;
+      color: rgba(255,255,255,0.9);
+    }
+    .title-text {
+      font-size: 68px;
+      line-height: 1.05;
+      margin-bottom: 20px;
+      max-width: 85%;
+    }
+    .subtitle-text {
+      font-size: 32px;
+      color: #fbbf24;
+      display: inline-block;
+      padding: 10px 24px;
+      background: rgba(0,0,0,0.5);
+      border-left: 4px solid #FF0000;
+      font-weight: 700;
+    }
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="yt-accent"></div>
+    <div class="content-wrapper">
+      <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <h1 class="title-text">${this.escapeHtml(title)}</h1>
+      ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+    </div>
+    </body></html>`;
+  }
+
+  private buildFacebookPost(input: {
+    width: number;
+    height: number;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(135deg, rgba(24,119,242,0.15) 0%, rgba(0,0,0,0.75) 60%, rgba(0,0,0,0.9) 100%);
+    }
+    .fb-accent {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 8px;
+      background: #1877F2;
+      z-index: 20;
+    }
+    .content-wrapper {
+      position: absolute;
+      inset: 0;
+      padding: 55px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      z-index: 10;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 32px;
+    }
+    .logo {
+      width: 68px;
+      height: 68px;
+      object-fit: contain;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.3);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .brand-name {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      font-size: 28px;
+      color: #fff;
+    }
+    .title-text {
+      font-size: 68px;
+      line-height: 1.05;
+      margin-bottom: 22px;
+    }
+    .subtitle-text {
+      font-size: 36px;
+      color: #60a5fa;
+      margin-bottom: 24px;
+      text-shadow: 0 2px 15px rgba(96,165,250,0.4);
+    }
+    .body-text {
+      font-size: 28px;
+      line-height: 1.4;
+      max-width: 85%;
+      margin-bottom: 28px;
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 32px;
+      font-size: 22px;
+      color: rgba(255,255,255,0.8);
+    }
+    .invitation-text {
+      margin-top: 24px;
+      font-size: 24px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.4;
+    }
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="fb-accent"></div>
+    <div class="content-wrapper">
+      <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <h1 class="title-text">${this.escapeHtml(title)}</h1>
+      ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+      ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+      <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+      ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+    </div>
+    </body></html>`;
+  }
+
+  private buildWhatsAppStatus(input: {
+    width: number;
+    height: number;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(180deg, rgba(7,94,84,0.3) 0%, rgba(0,0,0,0.2) 30%, rgba(0,0,0,0.6) 70%, rgba(7,94,84,0.4) 100%);
+    }
+    .top-section {
+      padding: 60px 50px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+    }
+    .logo {
+      width: 80px;
+      height: 80px;
+      object-fit: contain;
+      border-radius: 50%;
+      border: 3px solid #25D366;
+      box-shadow: 0 6px 25px rgba(37,211,102,0.3);
+    }
+    .brand-name {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      font-size: 32px;
+      text-shadow: 0 3px 20px rgba(0,0,0,0.5);
+    }
+    .center-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 50px;
+    }
+    .title-text {
+      font-size: 88px;
+      margin-bottom: 30px;
+      line-height: 1.0;
+    }
+    .subtitle-text {
+      font-size: 44px;
+      color: #25D366;
+      margin-bottom: 40px;
+      text-shadow: 0 3px 25px rgba(37,211,102,0.5);
+    }
+    .body-text {
+      font-size: 36px;
+      line-height: 1.4;
+      max-width: 90%;
+    }
+    .bottom-section {
+      padding: 50px;
+      text-align: center;
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 100%);
+    }
+    .invitation-text {
+      font-size: 32px;
+      font-weight: 600;
+      margin-bottom: 28px;
+      line-height: 1.35;
+    }
+    .meta-row {
+      font-size: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      color: rgba(255,255,255,0.8);
+    }
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="container">
+      <div class="top-section">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <div class="center-content">
+        <h1 class="title-text">${this.escapeHtml(title)}</h1>
+        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+      </div>
+      <div class="bottom-section">
+        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+        <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+      </div>
+    </div>
+    </body></html>`;
+  }
+
+  private buildXPost(input: {
+    width: number;
+    height: number;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(135deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0.4) 100%);
+    }
+    .x-accent {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 8px;
+      background: linear-gradient(180deg, #1DA1F2 0%, rgba(29,161,242,0.4) 100%);
+      z-index: 20;
+    }
+    .content-wrapper {
+      position: absolute;
+      inset: 0;
+      padding: 50px 55px 50px 55px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      z-index: 10;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 32px;
+    }
+    .logo {
+      width: 64px;
+      height: 64px;
+      object-fit: contain;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.3);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .brand-name {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      font-size: 26px;
+      color: #fff;
+    }
+    .title-text {
+      font-size: 64px;
+      line-height: 1.05;
+      margin-bottom: 22px;
+    }
+    .subtitle-text {
+      font-size: 34px;
+      color: #1DA1F2;
+      margin-bottom: 24px;
+      text-shadow: 0 2px 15px rgba(29,161,242,0.4);
+    }
+    .body-text {
+      font-size: 26px;
+      line-height: 1.4;
+      max-width: 85%;
+      margin-bottom: 28px;
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 28px;
+      font-size: 20px;
+      color: rgba(255,255,255,0.8);
+    }
+    .invitation-text {
+      margin-top: 24px;
+      font-size: 22px;
+      font-weight: 600;
+      color: #fff;
+      line-height: 1.4;
+    }
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="x-accent"></div>
+    <div class="content-wrapper">
+      <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <h1 class="title-text">${this.escapeHtml(title)}</h1>
+      ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+      ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+      <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+      ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+    </div>
+    </body></html>`;
+  }
+
+  private buildGenericTemplate(input: {
+    width: number;
+    height: number;
+    templateKey: string;
+    backgroundDataUrl: string;
+    logoDataUrl: string;
+    title: string;
+    subtitle: string;
+    body: string;
+    invitation: string;
+    churchName: string;
+    metaLines: string[];
+  }): string {
+    const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
+    const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const isVertical = height > width;
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
+    ${this.getBaseStyles(width, height, backgroundDataUrl)}
+    body::before {
+      background: linear-gradient(180deg, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.9) 100%);
+    }
+    .container {
+      padding: ${isVertical ? '55px 50px' : '50px 55px'};
+      justify-content: ${isVertical ? 'space-between' : 'center'};
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      ${isVertical ? '' : 'margin-bottom: 35px;'}
+    }
+    .logo {
+      width: ${isVertical ? '75px' : '65px'};
+      height: ${isVertical ? '75px' : '65px'};
+      object-fit: contain;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.4);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .brand-name {
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 700;
+      font-size: ${isVertical ? '30px' : '26px'};
+      color: #fff;
+    }
+    .content-area {
+      ${isVertical ? 'flex: 1; display: flex; flex-direction: column; justify-content: center;' : ''}
+      text-align: ${isVertical ? 'center' : 'left'};
+      ${isVertical ? 'padding: 40px 0;' : ''}
+    }
+    .title-text {
+      font-size: ${isVertical ? '80px' : '62px'};
+      margin-bottom: 22px;
+      line-height: 1.05;
+    }
+    .subtitle-text {
+      font-size: ${isVertical ? '42px' : '34px'};
+      color: #fbbf24;
+      margin-bottom: 28px;
+      text-shadow: 0 2px 20px rgba(251,191,36,0.5);
+    }
+    .body-text {
+      font-size: ${isVertical ? '34px' : '26px'};
+      line-height: 1.4;
+      ${isVertical ? 'max-width: 92%; margin: 0 auto;' : 'max-width: 90%;'}
+    }
+    .bottom-section {
+      ${isVertical ? 'text-align: center;' : 'margin-top: 35px;'}
+      background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 100%);
+      padding: ${isVertical ? '40px 0 0' : '30px 0 0'};
+    }
+    .invitation-text {
+      font-size: ${isVertical ? '30px' : '24px'};
+      font-weight: 600;
+      margin-bottom: 22px;
+      line-height: 1.35;
+    }
+    .meta-row {
+      font-size: ${isVertical ? '22px' : '20px'};
+      display: flex;
+      ${isVertical ? 'flex-direction: column; gap: 10px;' : 'flex-wrap: wrap; gap: 10px 28px;'}
+      color: rgba(255,255,255,0.8);
+    }
+    </style></head><body>
+    <div class="noise"></div>
+    <div class="container">
+      <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
+      <div class="content-area">
+        <h1 class="title-text">${this.escapeHtml(title)}</h1>
+        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+      </div>
+      <div class="bottom-section">
+        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+        <div class="meta-row">${metaLines.slice(0, 4).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+      </div>
+    </div>
+    </body></html>`;
   }
 
   private async fileToDataUrl(filePath: string, mime: string): Promise<string> {
