@@ -6,6 +6,7 @@ import type { Response } from 'express';
 import { SunoProvider } from './providers/suno.provider';
 import { SermonSongGeneratorService } from './sermon-song-generator.service';
 import { GenerateSermonLyricsDto, GenerateSermonSongDto, PreviewSermonSongDto, SongMode } from './dto/generate-sermon-song.dto';
+import { SelectTrackDto } from './dto/select-track.dto';
 import { SermonsService } from '../sermons/sermons.service';
 
 @Controller('music')
@@ -31,6 +32,11 @@ export class MusicController {
   @Get(':id')
   getMusic(@Param('id') id: string, @Request() req) {
     return this.musicService.getMusic(id, req.user.churchId);
+  }
+
+  @Post(':id/select-track')
+  selectTrack(@Param('id') id: string, @Body() dto: SelectTrackDto, @Request() req) {
+    return this.musicService.selectTrack(id, dto.trackId, req.user.churchId);
   }
 
   @Get(':id/download')
@@ -59,6 +65,7 @@ export class MusicController {
     if (dto.mode === 'ambient_only' || dto.mode === 'background_bed') {
       const ambientPrompt = await this.sermonSongGenerator.generateAmbientPrompt(
         effectiveElements,
+        dto.style || 'instrumental_ambient',
         dto.useCase || 'sermon-intro',
         180,
         dto.studyPrompt,
@@ -73,6 +80,7 @@ export class MusicController {
         effectiveElements,
         dto.style || 'worship',
         dto.mode,
+        dto.useCase || 'theme-song',
         dto.studyPrompt,
       );
       return {
@@ -91,16 +99,27 @@ export class MusicController {
     const effectiveElements = { ...elements, language: requestedLanguage };
 
     let prompt: string;
+    let genre: string = dto.style || 'worship';
     let metadata: any = {};
+    let title: string | undefined;
+    let instrumental = true;
 
     if (dto.mode === 'ambient_only' || dto.mode === 'background_bed') {
       const ambientPrompt = await this.sermonSongGenerator.generateAmbientPrompt(
         effectiveElements,
+        dto.style || 'instrumental_ambient',
         dto.useCase || 'sermon-intro',
         dto.duration || 180,
         dto.studyPrompt,
       );
       prompt = ambientPrompt.sunoPrompt;
+      genre = this.buildSunoStyleField(
+        dto.style || 'instrumental_ambient',
+        dto.useCase || 'sermon-intro',
+        dto.studyPrompt,
+      );
+      title = sermon.title;
+      instrumental = true;
       metadata = {
         type: 'ambient',
         useCase: dto.useCase,
@@ -111,7 +130,14 @@ export class MusicController {
       const lyricsDraft = this.requireLyricsDraft(sermon, dto, effectiveElements.language);
       const lyrics = lyricsDraft.lyrics;
 
-      prompt = lyrics.sunoPrompt;
+      prompt = this.buildSunoLyricsPrompt(lyrics);
+      genre = this.buildSunoStyleField(
+        lyricsDraft.style || dto.style || 'worship',
+        lyricsDraft.useCase || dto.useCase || 'theme-song',
+        lyricsDraft.studyPrompt || dto.studyPrompt,
+      );
+      title = lyrics.title;
+      instrumental = false;
       metadata = {
         type: 'lyrics',
         title: lyrics.title,
@@ -119,6 +145,7 @@ export class MusicController {
         mode: lyricsDraft.mode,
         style: lyricsDraft.style,
         useCase: lyricsDraft.useCase,
+        studyPrompt: lyricsDraft.studyPrompt || null,
         language: lyricsDraft.language,
         lyrics: {
           verse1: lyrics.verse1,
@@ -126,6 +153,7 @@ export class MusicController {
           verse2: lyrics.verse2,
           bridge: lyrics.bridge,
           outro: lyrics.outro,
+          plainTextPrompt: prompt,
           sunoPrompt: lyrics.sunoPrompt,
         },
         keyPhrases: lyrics.keyPhrases,
@@ -138,9 +166,11 @@ export class MusicController {
       sermonId: dto.sermonId,
       workspaceId: dto.workspaceId,
       prompt,
-      genre: dto.style || 'worship',
+      genre,
       durationSeconds: dto.duration || 180,
       provider: 'suno',
+      title,
+      instrumental,
     };
 
     const music = await this.musicService.requestMusic(createDto, req.user.churchId);
@@ -163,12 +193,14 @@ export class MusicController {
       effectiveElements,
       dto.style || 'worship',
       mode,
+      dto.useCase || 'theme-song',
       dto.studyPrompt,
     );
     await this.persistLyricsDraft(sermon, req.user.churchId, {
       mode,
       style: dto.style || 'worship',
       useCase: dto.useCase || null,
+      studyPrompt: dto.studyPrompt || null,
       language: effectiveElements.language,
       elements: effectiveElements,
       lyrics,
@@ -177,6 +209,55 @@ export class MusicController {
       type: 'lyrics',
       elements: effectiveElements,
       lyrics,
+    };
+  }
+
+  @Post('sermon-song/lyrics-draft')
+  async updateSermonLyricsDraft(@Body() dto: any, @Request() req) {
+    const sermon = await this.sermonsService.findOne(dto.sermonId, req.user.churchId);
+    const existingDraft = sermon?.manuscript?.songLyricsDraft;
+    if (!existingDraft?.lyrics) {
+      throw new BadRequestException('No saved lyrics draft found. Generate lyrics first.');
+    }
+
+    const language = this.resolveLanguage(dto.language, existingDraft.language);
+    const mode = (dto.mode || existingDraft.mode || SongMode.WITH_LYRICS) === SongMode.CHORUS_ONLY
+      ? SongMode.CHORUS_ONLY
+      : SongMode.WITH_LYRICS;
+    const style = String(dto.style || existingDraft.style || 'worship').trim();
+    const useCase = String(dto.useCase || existingDraft.useCase || 'theme-song').trim();
+    const studyPrompt = String(dto.studyPrompt ?? existingDraft.studyPrompt ?? '').trim();
+    const elements = dto.elements && typeof dto.elements === 'object'
+      ? dto.elements
+      : (existingDraft.elements || null);
+
+    const nextLyrics = this.sanitizeLyricsPayload({
+      ...(existingDraft.lyrics || {}),
+      ...(dto?.lyrics && typeof dto.lyrics === 'object' ? dto.lyrics : {}),
+    });
+    nextLyrics.sunoPrompt = this.buildSunoLyricsPrompt(nextLyrics);
+
+    await this.persistLyricsDraft(sermon, req.user.churchId, {
+      mode,
+      style,
+      useCase,
+      studyPrompt: studyPrompt || null,
+      language,
+      elements,
+      lyrics: nextLyrics,
+    });
+
+    return {
+      type: 'lyrics',
+      elements,
+      lyrics: nextLyrics,
+      draft: {
+        mode,
+        style,
+        useCase,
+        studyPrompt: studyPrompt || null,
+        language,
+      },
     };
   }
 
@@ -192,6 +273,7 @@ export class MusicController {
       mode: string;
       style: string;
       useCase: string | null;
+      studyPrompt: string | null;
       language: string;
       elements: any;
       lyrics: any;
@@ -240,6 +322,85 @@ export class MusicController {
       );
     }
 
+    const requestedStyle = String(dto.style || 'worship').trim();
+    const draftStyle = String(draft?.style || 'worship').trim();
+    if (requestedStyle !== draftStyle) {
+      throw new BadRequestException(
+        resolvedLanguage === 'es'
+          ? 'La letra guardada no coincide con el estilo seleccionado. Genera la letra nuevamente para este estilo.'
+          : 'The saved lyrics draft does not match the selected style. Generate lyrics again for this style.',
+      );
+    }
+
+    const requestedUseCase = String(dto.useCase || 'theme-song').trim();
+    const draftUseCase = String(draft?.useCase || 'theme-song').trim();
+    if (requestedUseCase !== draftUseCase) {
+      throw new BadRequestException(
+        resolvedLanguage === 'es'
+          ? 'La letra guardada no coincide con el caso de uso seleccionado. Genera la letra nuevamente para este caso de uso.'
+          : 'The saved lyrics draft does not match the selected use case. Generate lyrics again for this use case.',
+      );
+    }
+
+    const requestedStudyPrompt = String(dto.studyPrompt || '').trim();
+    const draftStudyPrompt = String(draft?.studyPrompt || '').trim();
+    if (requestedStudyPrompt !== draftStudyPrompt) {
+      throw new BadRequestException(
+        resolvedLanguage === 'es'
+          ? 'La letra guardada no coincide con la dirección creativa actual. Genera la letra nuevamente antes de crear música.'
+          : 'The saved lyrics draft does not match the current creative direction. Generate lyrics again before generating music.',
+      );
+    }
+
     return draft;
+  }
+
+  private buildSunoLyricsPrompt(lyrics: any): string {
+    const sections: Array<[string, string[]]> = [
+      ['Verse 1', Array.isArray(lyrics?.verse1) ? lyrics.verse1 : []],
+      ['Chorus', Array.isArray(lyrics?.chorus) ? lyrics.chorus : []],
+      ['Verse 2', Array.isArray(lyrics?.verse2) ? lyrics.verse2 : []],
+      ['Bridge', Array.isArray(lyrics?.bridge) ? lyrics.bridge : []],
+      ['Outro', Array.isArray(lyrics?.outro) ? lyrics.outro : []],
+    ];
+
+    const lyricsBody = sections
+      .filter(([, lines]) => lines.length > 0)
+      .map(([label, lines]) => `[${label}]\n${lines.join('\n')}`)
+      .join('\n\n')
+      .trim();
+    return lyricsBody;
+  }
+
+  private buildSunoStyleField(style?: string, useCase?: string, studyPrompt?: string): string {
+    const compactDirection = String(studyPrompt || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const pieces = [
+      String(style || 'worship').trim(),
+      useCase ? `use-case:${String(useCase).trim()}` : null,
+      compactDirection ? `direction:${compactDirection}` : null,
+    ].filter(Boolean) as string[];
+    return pieces.join(' | ').slice(0, 120);
+  }
+
+  private sanitizeLyricsPayload(lyrics: any) {
+    const toLines = (value: any): string[] =>
+      Array.isArray(value)
+        ? value.map((line) => String(line || '').trim()).filter(Boolean)
+        : [];
+
+    return {
+      title: String(lyrics?.title || '').trim(),
+      themeStatement: String(lyrics?.themeStatement || '').trim(),
+      verse1: toLines(lyrics?.verse1),
+      chorus: toLines(lyrics?.chorus),
+      verse2: toLines(lyrics?.verse2),
+      bridge: toLines(lyrics?.bridge),
+      outro: toLines(lyrics?.outro),
+      keyPhrases: toLines(lyrics?.keyPhrases),
+      scriptureAnchors: toLines(lyrics?.scriptureAnchors),
+      sunoPrompt: String(lyrics?.sunoPrompt || '').trim(),
+    };
   }
 }

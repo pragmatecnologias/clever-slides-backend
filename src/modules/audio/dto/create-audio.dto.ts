@@ -19,4 +19,8 @@ export class CreateAudioDto {
   @IsOptional()
   @IsString()
   provider?: string;
+
+  @IsOptional()
+  @IsString()
+  narrationPrompt?: string;
 }

@@ -15,7 +15,7 @@ export class AudioGenerationProcessor {
 
   @Process('generate')
   async handleGeneration(job: Job) {
-    const { audioId, text, voiceId, provider } = job.data;
+    const { audioId, text, voiceId, provider, narrationPrompt } = job.data;
 
     const audio = await this.audioRepository.findOne({ where: { id: audioId } });
     if (!audio) {
@@ -28,8 +28,8 @@ export class AudioGenerationProcessor {
 
       let result: { filePath: string; durationSeconds: number };
 
-      if (provider === 'elevenlabs') {
-        result = await this.elevenLabsProvider.generate(text, voiceId);
+      if (provider === 'elevenlabs' || provider === 'local') {
+        result = await this.elevenLabsProvider.generate(provider, text, voiceId, narrationPrompt);
       } else {
         throw new Error(`Unknown audio provider: ${provider}`);
       }

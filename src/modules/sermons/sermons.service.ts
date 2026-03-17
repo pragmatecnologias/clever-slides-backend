@@ -120,7 +120,18 @@ export class SermonsService {
         name: `Workspace ${dto.workspaceId.substring(0, 8)}`,
         timezone: 'America/New_York',
       });
-      await this.churchRepository.save(church);
+      try {
+        await this.churchRepository.save(church);
+      } catch (error) {
+        this.logger.warn(
+          `Church auto-create race detected for churchId=${churchId}: ${(error as Error)?.message || 'unknown error'}`,
+        );
+        const existingChurch = await this.churchRepository.findOne({ where: { id: churchId } });
+        if (!existingChurch) {
+          throw error;
+        }
+        church = existingChurch;
+      }
     }
 
     // Ensure user exists (auto-create if syncing from sermon app)
@@ -134,7 +145,18 @@ export class SermonsService {
         passwordHash: 'N/A',
         role: 'pastor' as any,
       });
-      await this.userRepository.save(user);
+      try {
+        await this.userRepository.save(user);
+      } catch (error) {
+        this.logger.warn(
+          `User auto-create race detected for userId=${userId}: ${(error as Error)?.message || 'unknown error'}`,
+        );
+        const existingUser = await this.userRepository.findOne({ where: { id: userId } });
+        if (!existingUser) {
+          throw error;
+        }
+        user = existingUser;
+      }
     }
 
     // Check if sermon already exists for this workspace

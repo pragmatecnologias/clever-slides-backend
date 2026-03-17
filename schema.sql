@@ -269,6 +269,8 @@ CREATE TABLE IF NOT EXISTS music_media (
   status music_media_status NOT NULL DEFAULT 'pending',
   "filePath" varchar,
   "errorMessage" varchar,
+  tracks jsonb,
+  "selectedTrackId" varchar,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );

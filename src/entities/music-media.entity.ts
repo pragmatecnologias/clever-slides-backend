@@ -44,6 +44,19 @@ export class MusicMedia {
   @Column({ nullable: true })
   errorMessage: string;
 
+  @Column({ type: 'jsonb', nullable: true })
+  tracks: Array<{
+    trackId: string;
+    audioUrl: string;
+    streamAudioUrl?: string;
+    imageUrl?: string;
+    title?: string;
+    durationSeconds?: number;
+  }> | null;
+
+  @Column({ nullable: true })
+  selectedTrackId: string;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -23,4 +23,11 @@ export class CreateMusicDto {
   @IsOptional()
   @IsString()
   provider?: string;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  instrumental?: boolean;
 }

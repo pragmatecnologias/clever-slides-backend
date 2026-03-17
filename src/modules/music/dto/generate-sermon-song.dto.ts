@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, IsArray } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsArray, IsObject } from 'class-validator';
 
 export enum SongMode {
   AMBIENT_ONLY = 'ambient_only',

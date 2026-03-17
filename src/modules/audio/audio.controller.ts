@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Delete, Param, Body, UseGuards, Request, Res } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Param, Body, UseGuards, Request, Res, Query } from '@nestjs/common';
 import { AudioService } from './audio.service';
 import { CreateAudioDto } from './dto/create-audio.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,8 +19,8 @@ export class AudioController {
   }
 
   @Get('voices')
-  async getVoices() {
-    return this.elevenLabsProvider.getVoices();
+  async getVoices(@Query('provider') provider?: string) {
+    return this.elevenLabsProvider.getVoices(String(provider || 'local'));
   }
 
   @Get(':id')

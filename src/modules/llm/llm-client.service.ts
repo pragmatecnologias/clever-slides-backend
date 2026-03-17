@@ -13,7 +13,18 @@ export class LlmClient {
     this.modelName = this.configService.get('LLM_MODEL_NAME') || 'local-model';
   }
 
-  async generateJson<T>(system: string, user: string, schemaHint?: any): Promise<T> {
+  async generateJson<T>(
+    system: string,
+    user: string,
+    schemaHint?: any,
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      topP?: number;
+      presencePenalty?: number;
+      frequencyPenalty?: number;
+    },
+  ): Promise<T> {
     try {
       this.logger.log(`LLM request → ${this.baseUrl}/chat/completions (model=${this.modelName})`);
       const response = await axios.post(
@@ -24,8 +35,11 @@ export class LlmClient {
             { role: 'system', content: system },
             { role: 'user', content: user },
           ],
-          temperature: 0.7,
-          max_tokens: 3000,
+          temperature: options?.temperature ?? 0.7,
+          max_tokens: options?.maxTokens ?? 3000,
+          top_p: options?.topP,
+          presence_penalty: options?.presencePenalty,
+          frequency_penalty: options?.frequencyPenalty,
         },
         {
           timeout: 60000,

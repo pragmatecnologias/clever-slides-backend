@@ -21,13 +21,20 @@ export class AudioService {
       throw new Error('Text is required for audio generation');
     }
 
-    if (createDto.text.length > 5000) {
+    const sanitizedText = this.sanitizeNarrationText(createDto.text);
+    if (sanitizedText.length > 5000) {
       throw new Error('Text is too long (max 5000 characters)');
     }
+    if (!sanitizedText) {
+      throw new Error('Text is required for audio generation');
+    }
+
+    const provider = this.resolveProvider(createDto.provider);
 
     const audio = this.audioRepository.create({
       ...createDto,
-      provider: createDto.provider || 'elevenlabs',
+      text: sanitizedText,
+      provider,
       status: AudioStatus.PENDING,
     });
 
@@ -35,9 +42,10 @@ export class AudioService {
 
     await this.audioQueue.add('generate', {
       audioId: audio.id,
-      text: createDto.text.trim(),
+      text: sanitizedText,
       voiceId: createDto.voiceId,
       provider: audio.provider,
+      narrationPrompt: String(createDto.narrationPrompt || '').trim() || undefined,
     });
 
     return { id: audio.id, status: 'queued' };
@@ -86,5 +94,26 @@ export class AudioService {
     const audio = await this.getAudio(id, churchId);
     await this.audioRepository.remove(audio);
     return { deleted: true };
+  }
+
+  private resolveProvider(provider?: string): 'local' | 'elevenlabs' {
+    const normalized = String(provider || '').trim().toLowerCase();
+    if (normalized === 'elevenlabs') return 'elevenlabs';
+    return 'local';
+  }
+
+  private sanitizeNarrationText(value: string): string {
+    return String(value || '')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<\/?[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }
