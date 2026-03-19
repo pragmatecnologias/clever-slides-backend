@@ -6,6 +6,7 @@ import { Queue } from 'bull';
 import { Deck, DeckStatus } from '../../entities/deck.entity';
 import { Sermon } from '../../entities/sermon.entity';
 import { BrandTheme } from '../../entities/brand-theme.entity';
+import { Export } from '../../entities/export.entity';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { RegenerateDeckDto } from './dto/regenerate-deck.dto';
 
@@ -18,6 +19,8 @@ export class DecksService {
     private sermonRepository: Repository<Sermon>,
     @InjectRepository(BrandTheme)
     private themeRepository: Repository<BrandTheme>,
+    @InjectRepository(Export)
+    private exportRepository: Repository<Export>,
     @InjectQueue('deck-generation')
     private deckGenerationQueue: Queue,
   ) {}
@@ -151,5 +154,18 @@ export class DecksService {
     });
 
     return deck;
+  }
+
+  async remove(id: string, churchId: string) {
+    const deck = await this.findOne(id, churchId);
+
+    const jobs = await this.deckGenerationQueue.getJobs(['waiting', 'active', 'delayed']);
+    const deckJobs = jobs.filter((job) => job?.data?.deckId === deck.id);
+    await Promise.all(deckJobs.map((job) => job.remove().catch(() => undefined)));
+
+    await this.exportRepository.delete({ deckId: deck.id });
+    await this.deckRepository.remove(deck);
+
+    return { deleted: true };
   }
 }

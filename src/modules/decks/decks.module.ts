@@ -8,6 +8,7 @@ import { Sermon } from '../../entities/sermon.entity';
 import { BrandTheme } from '../../entities/brand-theme.entity';
 import { Slide } from '../../entities/slide.entity';
 import { SlideTemplate } from '../../entities/slide-template.entity';
+import { Export } from '../../entities/export.entity';
 import { DecksController } from './decks.controller';
 import { DecksService } from './decks.service';
 import { DeckGenerationProcessor } from './deck-generation.processor';
@@ -15,7 +16,7 @@ import { LlmModule } from '../llm/llm.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Deck, Sermon, BrandTheme, Slide, SlideTemplate]),
+    TypeOrmModule.forFeature([Deck, Sermon, BrandTheme, Slide, SlideTemplate, Export]),
     BullModule.registerQueue({
       name: 'deck-generation',
     }),

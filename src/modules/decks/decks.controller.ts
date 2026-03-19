@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Request, Sse, MessageEvent, Query, UnauthorizedException, SetMetadata } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, Request, Sse, MessageEvent, Query, UnauthorizedException, SetMetadata, Delete } from '@nestjs/common';
 import { Observable, interval, map, takeWhile, switchMap, from } from 'rxjs';
 import { DecksService } from './decks.service';
 import { CreateDeckDto } from './dto/create-deck.dto';
@@ -52,6 +52,11 @@ export class DecksController {
   async getStatus(@Param('id') id: string, @Request() req) {
     const deck = await this.decksService.findOne(id, req.user.churchId);
     return { status: deck.status };
+  }
+
+  @Delete('decks/:id')
+  remove(@Param('id') id: string, @Request() req) {
+    return this.decksService.remove(id, req.user.churchId);
   }
 
   @Public()

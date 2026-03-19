@@ -6,9 +6,11 @@ import { AudioController } from './audio.controller';
 import { AudioGenerationProcessor } from './audio-generation.processor';
 import { AudioMedia } from '../../entities/audio-media.entity';
 import { ElevenLabsProvider } from './providers/elevenlabs.provider';
+import { LlmModule } from '../llm/llm.module';
 
 @Module({
   imports: [
+    LlmModule,
     TypeOrmModule.forFeature([AudioMedia]),
     BullModule.registerQueue({
       name: 'audio-generation',

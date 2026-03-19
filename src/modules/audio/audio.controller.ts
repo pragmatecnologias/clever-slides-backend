@@ -1,6 +1,7 @@
 import { Controller, Post, Get, Delete, Param, Body, UseGuards, Request, Res, Query } from '@nestjs/common';
 import { AudioService } from './audio.service';
 import { CreateAudioDto } from './dto/create-audio.dto';
+import { GenerateNarrationDto } from './dto/generate-narration.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { Response } from 'express';
 import { ElevenLabsProvider } from './providers/elevenlabs.provider';
@@ -16,6 +17,11 @@ export class AudioController {
   @Post('generate')
   generate(@Body() createDto: CreateAudioDto, @Request() req) {
     return this.audioService.requestAudio(createDto, req.user.churchId);
+  }
+
+  @Post('narration-script')
+  generateNarrationScript(@Body() input: GenerateNarrationDto) {
+    return this.audioService.generateNarrationScript(input);
   }
 
   @Get('voices')
