@@ -56,15 +56,23 @@ export class DeckGenerationProcessor {
         throw new Error('Deck not found');
       }
 
-      const templates = await this.resolveTemplates(templatePlan, templatePackId, deck.theme?.defaultTemplatePackId);
-      this.logger.log(`Resolved ${templates.length} templates for deck ${deckId}`);
+      // resolveTemplates respects templatePlan (for LLM-based curation).
+      // For SimpleDeckGenerationService, pass ALL templates from the pack so every
+      // slide type can be assigned a templateId for regenerate support.
+      const allTemplates = templatePackId || deck.theme?.defaultTemplatePackId
+        ? await this.templateRepository.find({
+            where: { packId: templatePackId || deck.theme.defaultTemplatePackId },
+            order: { sortOrder: 'ASC', name: 'ASC' },
+          })
+        : [];
+      this.logger.log(`Resolved ${allTemplates.length} templates for slide generation`);
 
       // Use simple deck generation service that uses sermon data directly (no LLM calls)
       const slides = await this.simpleDeckGenerationService.generateDeck(
         deck.sermon,
         deck.theme,
         deckSize,
-        templates,
+        allTemplates,
         (progress, message) => {
           this.logger.log(`Deck ${deckId} progress: ${progress}% - ${message}`);
           job.progress(progress);

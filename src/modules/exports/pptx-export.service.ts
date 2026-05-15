@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import PptxGenJS from 'pptxgenjs';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const PptxModule = require('pptxgenjs');
+const Pptx = (PptxModule as any).default?.default ?? (PptxModule as any).default ?? PptxModule;
 import { Deck } from '../../entities/deck.entity';
 import { SlideType } from '../../entities/slide-types';
 import * as path from 'path';
@@ -27,7 +29,7 @@ export class PptxExportService {
   }
 
   async generatePptx(deck: Deck): Promise<string> {
-    const pptx = new PptxGenJS();
+    const pptx = new Pptx();
 
     pptx.layout = 'LAYOUT_16x9';
     pptx.author = 'Pastor Decks';

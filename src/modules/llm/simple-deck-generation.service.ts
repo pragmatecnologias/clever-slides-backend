@@ -46,6 +46,22 @@ export class SimpleDeckGenerationService {
     let currentProgress = 0;
     const intensity = this.normalizeDeckIntensity(deckSize);
 
+    // Build layoutKey → templateId lookup so every slide gets a templateId
+    const layoutToTemplateId = new Map<string, string>();
+    for (const t of templates) {
+      if (t.layoutKey) layoutToTemplateId.set(t.layoutKey, t.id);
+    }
+    // Fallback: if no template matches, use first template of same slideType
+    const typeToFirstTemplateId = new Map<string, string>();
+    for (const t of templates) {
+      if (t.slideType && !typeToFirstTemplateId.has(t.slideType)) {
+        typeToFirstTemplateId.set(t.slideType, t.id);
+      }
+    }
+    const resolveTemplateId = (layoutKey: string, slideType: SlideType): string | undefined => {
+      return layoutToTemplateId.get(layoutKey) ?? typeToFirstTemplateId.get(slideType);
+    };
+
     const updateProgress = (increment: number, message: string) => {
       currentProgress += increment;
       progressCallback?.(currentProgress, message);
@@ -53,19 +69,19 @@ export class SimpleDeckGenerationService {
 
     // Title Slide
     updateProgress(10, 'Creating title slide...');
-    slides.push(this.generateTitleSlide(sermon));
+    slides.push(this.generateTitleSlide(sermon, resolveTemplateId));
 
     // Scripture Slide
     if (sermon.mainScriptureRef) {
       updateProgress(10, 'Adding scripture reference...');
-      slides.push(this.generateScriptureSlide(sermon));
+      slides.push(this.generateScriptureSlide(sermon, resolveTemplateId));
     }
 
     // Introduction from outline
     const introductionText = this.extractIntroductionText(sermon);
     if (introductionText) {
       updateProgress(10, 'Adding introduction...');
-      slides.push(this.generateIntroductionSlide(sermon, introductionText));
+      slides.push(this.generateIntroductionSlide(sermon, introductionText, resolveTemplateId));
     }
 
     // Main Points with rich content from outline pointNodes + study assets
@@ -74,14 +90,14 @@ export class SimpleDeckGenerationService {
     for (let i = 0; i < pointRecords.length; i++) {
       updateProgress(pointsProgress, `Creating point ${i + 1}...`);
       const point = pointRecords[i];
-      slides.push(this.generatePointSlide(sermon, point, i));
+      slides.push(this.generatePointSlide(sermon, point, i, resolveTemplateId));
 
       if (this.shouldAddSupportSlide(point, i, pointRecords.length, intensity)) {
-        slides.push(this.generatePointSupportSlide(point, i));
+        slides.push(this.generatePointSupportSlide(point, i, resolveTemplateId));
       }
 
       if (this.shouldAddPointApplicationSlide(point, intensity)) {
-        slides.push(this.generatePointApplicationSlide(point, i));
+        slides.push(this.generatePointApplicationSlide(point, i, resolveTemplateId));
       }
     }
 
@@ -90,7 +106,7 @@ export class SimpleDeckGenerationService {
     if (applicationBullets.length > 0) {
       updateProgress(10, 'Adding applications...');
       this.chunkBySize(applicationBullets, intensity === 'short' ? 4 : 5).forEach((chunk, index, allChunks) => {
-        slides.push(this.generateApplicationSlide(sermon, chunk, index, allChunks.length));
+        slides.push(this.generateApplicationSlide(sermon, chunk, index, allChunks.length, resolveTemplateId));
       });
     }
 
@@ -99,29 +115,33 @@ export class SimpleDeckGenerationService {
     if (questionBullets.length > 0) {
       updateProgress(10, 'Adding reflection questions...');
       this.chunkBySize(questionBullets, 4).forEach((chunk, index, allChunks) => {
-        slides.push(this.generateQuestionsSlide(sermon, chunk, index, allChunks.length));
+        slides.push(this.generateQuestionsSlide(sermon, chunk, index, allChunks.length, resolveTemplateId));
       });
     }
 
     // Closing summary before invitation
     if (pointRecords.length > 0) {
-      slides.push(this.generateSummarySlide(sermon, pointRecords));
+      slides.push(this.generateSummarySlide(sermon, pointRecords, resolveTemplateId));
     }
 
     // Call to Action
     if (sermon.ctaStyle !== 'none') {
       updateProgress(10, 'Adding call to action...');
-      slides.push(this.generateInvitationSlide(sermon));
+      slides.push(this.generateInvitationSlide(sermon, resolveTemplateId));
     }
 
     updateProgress(0, 'Deck generation complete!');
     return slides;
   }
 
-  private generateTitleSlide(sermon: Sermon): SlideContent {
+  private generateTitleSlide(
+    sermon: Sermon,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     return {
       type: SlideType.TITLE,
       layoutKey: 'title_centered_v1',
+      templateId: resolveTemplateId('title_centered_v1', SlideType.TITLE),
       content: {
         title: sermon.title || 'Untitled Sermon',
         subtitle: sermon.seriesTitle || sermon.bigIdea,
@@ -135,12 +155,16 @@ export class SimpleDeckGenerationService {
     };
   }
 
-  private generateScriptureSlide(sermon: Sermon): SlideContent {
+  private generateScriptureSlide(
+    sermon: Sermon,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     const scriptureBody = this.buildScriptureBodyText(sermon);
     const scriptureLines = this.toDisplayLines(scriptureBody, 3);
     return {
       type: SlideType.SCRIPTURE,
       layoutKey: 'scripture_centered_v1',
+      templateId: resolveTemplateId('scripture_centered_v1', SlideType.SCRIPTURE),
       content: {
         reference: sermon.mainScriptureRef,
         lines: scriptureLines,
@@ -155,10 +179,15 @@ export class SimpleDeckGenerationService {
     };
   }
 
-  private generateIntroductionSlide(sermon: Sermon, intro: string): SlideContent {
+  private generateIntroductionSlide(
+    sermon: Sermon,
+    intro: string,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     return {
       type: SlideType.TRANSITION,
       layoutKey: 'section_header_v1',
+      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
       content: {
         title: this.t(sermon, 'Introduction', 'Introducción'),
         subtitle: typeof intro === 'string' ? this.asString(intro) : '',
@@ -168,7 +197,12 @@ export class SimpleDeckGenerationService {
     };
   }
 
-  private generatePointSlide(sermon: Sermon, pointRecord: PointRecord, index: number): SlideContent {
+  private generatePointSlide(
+    sermon: Sermon,
+    pointRecord: PointRecord,
+    index: number,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     const fullTitle = pointRecord.title || sermon.mainPoints[index] || `Point ${index + 1}`;
     const bullets = this.buildPointBullets(pointRecord);
     const speakerNotes = this.buildPointSpeakerNotes(sermon, pointRecord, index, fullTitle);
@@ -197,6 +231,7 @@ export class SimpleDeckGenerationService {
     return {
       type: SlideType.POINT,
       layoutKey: 'point_bullets_v1',
+      templateId: resolveTemplateId('point_bullets_v1', SlideType.POINT),
       content: {
         title: titleWithNumber,
         bullets: finalBullets.length > 0 ? finalBullets.slice(0, 4) : [this.limitText(fullTitle, 80)],
@@ -348,12 +383,14 @@ export class SimpleDeckGenerationService {
     bullets: string[],
     chunkIndex = 0,
     totalChunks = 1,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
     const base = this.t(sermon, 'Application', 'Aplicación');
     const title = totalChunks > 1 ? `${base} (${chunkIndex + 1}/${totalChunks})` : base;
     return {
       type: SlideType.APPLICATION,
       layoutKey: 'application_bullets_v1',
+      templateId: resolveTemplateId('application_bullets_v1', SlideType.APPLICATION),
       content: {
         title,
         bullets: bullets.slice(0, 5),
@@ -372,12 +409,14 @@ export class SimpleDeckGenerationService {
     bullets: string[],
     chunkIndex = 0,
     totalChunks = 1,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
     const base = this.t(sermon, 'Reflection Questions', 'Preguntas de reflexión');
     const title = totalChunks > 1 ? `${base} (${chunkIndex + 1}/${totalChunks})` : base;
     return {
       type: SlideType.APPLICATION,
       layoutKey: 'application_bullets_v1',
+      templateId: resolveTemplateId('application_bullets_v1', SlideType.APPLICATION),
       content: {
         title,
         bullets: bullets.slice(0, 4),
@@ -391,7 +430,10 @@ export class SimpleDeckGenerationService {
     };
   }
 
-  private generateInvitationSlide(sermon: Sermon): SlideContent {
+  private generateInvitationSlide(
+    sermon: Sermon,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     const isEs = this.isSpanishWorkspace(sermon);
     const ctaTitles = isEs
       ? {
@@ -428,6 +470,7 @@ export class SimpleDeckGenerationService {
     return {
       type: SlideType.INVITATION,
       layoutKey: 'invitation_centered_v1',
+      templateId: resolveTemplateId('invitation_centered_v1', SlideType.INVITATION),
       content: {
         title: ctaTitles[sermon.ctaStyle] || this.t(sermon, "Respond to God's Call", 'Responde al llamado de Dios'),
         message: ctaMessageBody[sermon.ctaStyle] || this.t(sermon, 'Respond to what God is saying.', 'Responde a lo que Dios está diciendo.'),
@@ -570,7 +613,11 @@ export class SimpleDeckGenerationService {
     return noteParts.join('\n\n');
   }
 
-  private generatePointSupportSlide(point: PointRecord, index: number): SlideContent {
+  private generatePointSupportSlide(
+    point: PointRecord,
+    index: number,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     const isSpanish = this.isLikelySpanish(
       [point.title, point.summary, ...point.subpoints, ...point.applications].filter(Boolean).join(' ')
     );
@@ -585,6 +632,7 @@ export class SimpleDeckGenerationService {
     return {
       type: SlideType.SUPPORT,
       layoutKey: 'point_bullets_v1',
+      templateId: resolveTemplateId('point_bullets_v1', SlideType.SUPPORT),
       content: {
         title: `${index + 1}. ${isSpanish ? 'Soporte bíblico' : 'Biblical support'}`,
         bullets: bullets.length > 0 ? bullets : [isSpanish ? 'Conectar el punto con el texto bíblico principal' : 'Connect this point to the primary biblical text'],
@@ -596,7 +644,11 @@ export class SimpleDeckGenerationService {
     };
   }
 
-  private generatePointApplicationSlide(point: PointRecord, index: number): SlideContent {
+  private generatePointApplicationSlide(
+    point: PointRecord,
+    index: number,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     const isSpanish = this.isLikelySpanish(
       [point.title, point.summary, ...point.subpoints, ...point.applications].filter(Boolean).join(' ')
     );
@@ -608,6 +660,7 @@ export class SimpleDeckGenerationService {
     return {
       type: SlideType.APPLICATION,
       layoutKey: 'application_bullets_v1',
+      templateId: resolveTemplateId('application_bullets_v1', SlideType.APPLICATION),
       content: {
         title: `${index + 1}. ${isSpanish ? 'Respuesta práctica' : 'Practical response'}`,
         bullets: bullets.length > 0 ? bullets : [isSpanish ? `Aplicar "${point.title}" de forma concreta esta semana` : `Apply "${point.title}" in a concrete way this week`],
@@ -619,7 +672,11 @@ export class SimpleDeckGenerationService {
     };
   }
 
-  private generateSummarySlide(sermon: Sermon, pointRecords: PointRecord[]): SlideContent {
+  private generateSummarySlide(
+    sermon: Sermon,
+    pointRecords: PointRecord[],
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
     const bullets = pointRecords
       .slice(0, 5)
       .map((point, index) => `${index + 1}) ${this.limitText(point.title, 90)}`);
@@ -627,6 +684,7 @@ export class SimpleDeckGenerationService {
     return {
       type: SlideType.TRANSITION,
       layoutKey: 'application_bullets_v1',
+      templateId: resolveTemplateId('application_bullets_v1', SlideType.TRANSITION),
       content: {
         title: this.t(sermon, 'Summary and Response', 'Resumen y Llamado'),
         bullets,
