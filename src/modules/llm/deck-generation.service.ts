@@ -4,6 +4,15 @@ import { BrandTheme } from '../../entities/brand-theme.entity';
 import { SlideType } from '../../entities/slide-types';
 import { SlideTemplate } from '../../entities/slide-template.entity';
 import { LlmClient } from './llm-client.service';
+import {
+  buildSlideStyleDefaults,
+  cleanText,
+  formatPresentationSentence,
+  normalizeBulletList,
+  shortenText,
+  splitPassageText,
+  splitTextIntoLines,
+} from './slide-content-formatting';
 
 interface SlideContent {
   type: SlideType;
@@ -31,7 +40,7 @@ export class DeckGenerationService {
       let pointIndex = 0;
 
       for (const template of templates) {
-        const generated = await this.generateFromTemplate(sermon, template, pointIndex);
+        const generated = this.decorateSlide(await this.generateFromTemplate(sermon, template, pointIndex), sermon);
         if (generated.type === SlideType.POINT) {
           pointIndex += 1;
         }
@@ -43,20 +52,20 @@ export class DeckGenerationService {
 
     const slides: SlideContent[] = [];
 
-    slides.push(await this.generateTitleSlide(sermon));
+    slides.push(this.decorateSlide(await this.generateTitleSlide(sermon), sermon));
 
     if (sermon.mainScriptureRef) {
-      slides.push(await this.generateScriptureSlide(sermon));
+      slides.push(this.decorateSlide(await this.generateScriptureSlide(sermon), sermon));
     }
 
     for (let i = 0; i < sermon.mainPoints.length; i++) {
-      slides.push(await this.generatePointSlide(sermon, i));
+      slides.push(this.decorateSlide(await this.generatePointSlide(sermon, i), sermon));
     }
 
-    slides.push(await this.generateApplicationSlide(sermon));
+    slides.push(this.decorateSlide(await this.generateApplicationSlide(sermon), sermon));
 
     if (sermon.ctaStyle !== 'none') {
-      slides.push(await this.generateInvitationSlide(sermon));
+      slides.push(this.decorateSlide(await this.generateInvitationSlide(sermon), sermon));
     }
 
     return slides;
@@ -128,11 +137,74 @@ export class DeckGenerationService {
       ? `A cinematic church-themed background for "${sermon.title}". ${sermon.bigIdea}`
       : undefined;
 
-    return {
+    return this.decorateSlide({
       ...slide,
       layoutKey: template.layoutKey || slide.layoutKey,
       templateId: template.id,
       imagePrompt,
+    }, sermon);
+  }
+
+  private decorateSlide(slide: SlideContent, sermon: Sermon): SlideContent {
+    const content = { ...(slide.content || {}) };
+
+    if (slide.type === SlideType.TITLE) {
+      content.title = shortenText(content.title || sermon.title || 'Untitled Sermon', 48);
+      content.subtitle = shortenText(content.subtitle || sermon.seriesTitle || sermon.bigIdea || '', 88);
+    }
+
+    if (slide.type === SlideType.SCRIPTURE) {
+      const ref = shortenText(content.reference || sermon.mainScriptureRef || 'Scripture', 42);
+      const text = Array.isArray(content.lines) ? content.lines.join(' ') : cleanText(content.lines || content.text || '');
+      const lines = splitPassageText(text || sermon.outline?.structure?.scriptureText || sermon.bigIdea || ref, 3);
+      content.reference = ref;
+      content.lines = lines.length ? lines : splitTextIntoLines(text || ref, 3, 42);
+    }
+
+    if (slide.type === SlideType.POINT) {
+      content.title = shortenText(content.title || sermon.bigIdea || 'Point', 52);
+      const bullets = Array.isArray(content.bullets) ? content.bullets : [];
+      content.bullets = normalizeBulletList(bullets, { maxBullets: 4, maxChars: 68 });
+      if (!content.bullets.length && content.title) {
+        content.bullets = [shortenText(content.title, 68)];
+      }
+    }
+
+    if (slide.type === SlideType.APPLICATION) {
+      content.title = shortenText(content.title || 'Application', 40);
+      const bullets = Array.isArray(content.bullets) ? content.bullets : [];
+      content.bullets = normalizeBulletList(bullets, { maxBullets: 3, maxChars: 56 });
+    }
+
+    if (slide.type === SlideType.INVITATION) {
+      content.title = shortenText(content.title || 'Respond', 42);
+      content.message = shortenText(content.message || sermon.ctaStyle || 'Respond in faith.', 140);
+    }
+
+    if (slide.type === SlideType.SUPPORT) {
+      if (content.title) content.title = shortenText(content.title, 46);
+      if (Array.isArray(content.left)) content.left = normalizeBulletList(content.left, { maxBullets: 4, maxChars: 64 });
+      if (Array.isArray(content.right)) content.right = normalizeBulletList(content.right, { maxBullets: 4, maxChars: 64 });
+    }
+
+    if (slide.type === SlideType.TRANSITION || slide.type === SlideType.ANNOUNCEMENT || slide.type === SlideType.PRAYER) {
+      if (content.title) content.title = shortenText(content.title, 44);
+      if (content.subtitle) content.subtitle = shortenText(content.subtitle, 72);
+      if (content.body) content.body = shortenText(content.body, 160);
+      if (content.caption) content.caption = shortenText(content.caption, 120);
+      if (Array.isArray(content.lines)) content.lines = splitTextIntoLines(content.lines.join(' '), 3, 46);
+    }
+
+    content.__styles = {
+      ...(content.__styles || {}),
+      ...buildSlideStyleDefaults(slide.type, content),
+    };
+
+    return {
+      ...slide,
+      content,
+      speakerNotes: shortenText(slide.speakerNotes || '', 800),
+      imagePrompt: shortenText(slide.imagePrompt || '', 240),
     };
   }
 
@@ -396,7 +468,7 @@ ${includeSubtitle ? 'Subtitle under 50 chars, clarifying the point.' : 'No subti
           .map((segment) => segment.trim())
           .filter(Boolean),
       )
-      .map((line) => line.replace(/\s+/g, ' '));
+      .map((line) => formatPresentationSentence(line.replace(/\s+/g, ' '), 72));
 
     return splitLines.length ? splitLines : lines;
   }

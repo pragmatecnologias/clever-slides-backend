@@ -80,7 +80,7 @@ export class SermonsService {
     
     // If updating mainPoints and they are insufficient, use LLM to enhance them
     if (updateSermonDto.mainPoints !== undefined) {
-      let mainPoints = updateSermonDto.mainPoints;
+      const mainPoints = updateSermonDto.mainPoints;
       
       if (!mainPoints || mainPoints.length < 3) {
         this.logger.log(`Analyzing updated sermon "${sermon.title}" to extract main points`);

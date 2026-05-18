@@ -14,6 +14,14 @@ export enum DeckStatus {
   FAILED = 'failed',
 }
 
+export enum DeckIntent {
+  SERMON_PRESENTATION = 'sermon_presentation',
+  SOCIAL_SUMMARY = 'social_summary',
+  TEACHING_STUDY = 'teaching_study',
+  YOUTH_MESSAGE = 'youth_message',
+  EVANGELISTIC_APPEAL = 'evangelistic_appeal',
+}
+
 @Entity('decks')
 export class Deck {
   @PrimaryGeneratedColumn('uuid')
@@ -46,6 +54,13 @@ export class Deck {
 
   @Column({ type: 'jsonb', nullable: true })
   templatePlan: string[];
+
+  @Column({
+    type: 'varchar',
+    nullable: false,
+    default: DeckIntent.SERMON_PRESENTATION,
+  })
+  deckIntent: DeckIntent;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -147,8 +147,10 @@ export class SocialService {
 
   private resolveOverlay(dto: CreateSocialMediaDto) {
     const overlay = dto.overlay || {};
+    const language = String(overlay.language || 'en').toLowerCase();
+    const fallbackTitle = this.buildHeadlineFromSermon(dto.title, dto.passage, dto.caption, dto.quote, language);
     return {
-      eventTitle: overlay.eventTitle || dto.title || 'Sermon Event',
+      eventTitle: this.isGenericTitle(overlay.eventTitle) ? fallbackTitle : overlay.eventTitle || fallbackTitle,
       eventSubtitle: overlay.eventSubtitle || dto.passage || '',
       serviceDate: overlay.serviceDate || '',
       serviceTime: overlay.serviceTime || '',
@@ -172,6 +174,44 @@ export class SocialService {
       imagePreset: overlay.imagePreset || 'modern',
       language: overlay.language || 'en',
     };
+  }
+
+  private isGenericTitle(value: unknown): boolean {
+    const text = String(value || '').trim().toLowerCase();
+    if (!text) return true;
+    return (
+      /^(sermon event|demo sermon|test sermon|workspace|final|validation|e2e|untitled|presentation)$/.test(text) ||
+      /\b(workspace|test|demo|validation|final|event)\b/.test(text)
+    );
+  }
+
+  private buildHeadlineFromSermon(
+    title?: string,
+    passage?: string,
+    caption?: string,
+    quote?: string,
+    language = 'en',
+  ): string {
+    const source = `${title || ''} ${passage || ''} ${caption || ''} ${quote || ''}`.toLowerCase();
+    const isSpanish = language.startsWith('es');
+
+    if (/john\s*3:16|juan\s*3:16/.test(source) || /love|grace|salvat|salvaci[oó]n|eternal life|vida eterna/.test(source)) {
+      return isSpanish ? 'El amor de Dios da vida eterna' : 'God’s love gives eternal life';
+    }
+
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return isSpanish ? 'El evangelio eterno sigue llamando' : 'The everlasting gospel still calls';
+    }
+
+    if (/daniel\s*7|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return isSpanish ? 'Dios llama a la fidelidad' : 'God calls His people to faithfulness';
+    }
+
+    const cleanTitle = String(title || passage || (isSpanish ? 'Mensaje del sermón' : 'Sermon message'))
+      .replace(/[“”"]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return cleanTitle.length > 48 ? `${cleanTitle.slice(0, 45).trimEnd()}…` : cleanTitle;
   }
 
   async getSocialMedia(id: string) {

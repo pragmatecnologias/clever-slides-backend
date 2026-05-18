@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Export, ExportType, ExportStatus } from '../../entities/export.entity';
 import { Deck } from '../../entities/deck.entity';
 import { PptxExportService } from './pptx-export.service';
+import { PdfExportService } from './pdf-export.service';
 
 @Injectable()
 export class ExportsService {
@@ -15,6 +16,7 @@ export class ExportsService {
     @InjectRepository(Deck)
     private deckRepository: Repository<Deck>,
     private pptxExportService: PptxExportService,
+    private pdfExportService: PdfExportService,
   ) {}
 
   /**
@@ -43,6 +45,8 @@ export class ExportsService {
 
       if (type === ExportType.PPTX) {
         fileUrl = await this.pptxExportService.generatePptx(deck);
+      } else if (type === ExportType.PDF) {
+        fileUrl = await this.pdfExportService.generatePdf(deck);
       } else {
         throw new Error(`Unsupported export type: ${type}`);
       }

@@ -3,6 +3,15 @@ import { Sermon } from '../../entities/sermon.entity';
 import { BrandTheme } from '../../entities/brand-theme.entity';
 import { SlideType } from '../../entities/slide-types';
 import { SlideTemplate } from '../../entities/slide-template.entity';
+import {
+  buildSlideStyleDefaults,
+  cleanText,
+  formatPresentationSentence,
+  normalizeBulletList,
+  shortenText,
+  splitPassageText,
+  splitTextIntoLines,
+} from './slide-content-formatting';
 
 interface SlideContent {
   type: SlideType;
@@ -26,6 +35,12 @@ interface PointRecord {
 }
 
 type DeckIntensity = 'short' | 'standard' | 'long';
+type DeckIntentMode =
+  | 'sermon_presentation'
+  | 'social_summary'
+  | 'teaching_study'
+  | 'youth_message'
+  | 'evangelistic_appeal';
 
 @Injectable()
 export class SimpleDeckGenerationService {
@@ -40,6 +55,7 @@ export class SimpleDeckGenerationService {
     theme: BrandTheme,
     deckSize: string,
     templates: SlideTemplate[] = [],
+    deckIntent: string = 'sermon_presentation',
     progressCallback?: (progress: number, message: string) => void,
   ): Promise<SlideContent[]> {
     const slides: SlideContent[] = [];
@@ -67,71 +83,14 @@ export class SimpleDeckGenerationService {
       progressCallback?.(currentProgress, message);
     };
 
-    // Title Slide
-    updateProgress(10, 'Creating title slide...');
-    slides.push(this.generateTitleSlide(sermon, resolveTemplateId));
-
-    // Scripture Slide
-    if (sermon.mainScriptureRef) {
-      updateProgress(10, 'Adding scripture reference...');
-      slides.push(this.generateScriptureSlide(sermon, resolveTemplateId));
-    }
-
-    // Introduction from outline
-    const introductionText = this.extractIntroductionText(sermon);
-    if (introductionText) {
-      updateProgress(10, 'Adding introduction...');
-      slides.push(this.generateIntroductionSlide(sermon, introductionText, resolveTemplateId));
-    }
-
-    // Main Points with rich content from outline pointNodes + study assets
-    const pointRecords = this.buildPointRecords(sermon);
-    const pointsProgress = 40 / Math.max(pointRecords.length, 1);
-    for (let i = 0; i < pointRecords.length; i++) {
-      updateProgress(pointsProgress, `Creating point ${i + 1}...`);
-      const point = pointRecords[i];
-      slides.push(this.generatePointSlide(sermon, point, i, resolveTemplateId));
-
-      if (this.shouldAddSupportSlide(point, i, pointRecords.length, intensity)) {
-        slides.push(this.generatePointSupportSlide(point, i, resolveTemplateId));
-      }
-
-      if (this.shouldAddPointApplicationSlide(point, intensity)) {
-        slides.push(this.generatePointApplicationSlide(point, i, resolveTemplateId));
-      }
-    }
-
-    // Applications
-    const applicationBullets = this.getApplicationBullets(sermon, pointRecords);
-    if (applicationBullets.length > 0) {
-      updateProgress(10, 'Adding applications...');
-      this.chunkBySize(applicationBullets, intensity === 'short' ? 4 : 5).forEach((chunk, index, allChunks) => {
-        slides.push(this.generateApplicationSlide(sermon, chunk, index, allChunks.length, resolveTemplateId));
-      });
-    }
-
-    // Questions for reflection
-    const questionBullets = this.getQuestionBullets(sermon, pointRecords);
-    if (questionBullets.length > 0) {
-      updateProgress(10, 'Adding reflection questions...');
-      this.chunkBySize(questionBullets, 4).forEach((chunk, index, allChunks) => {
-        slides.push(this.generateQuestionsSlide(sermon, chunk, index, allChunks.length, resolveTemplateId));
-      });
-    }
-
-    // Closing summary before invitation
-    if (pointRecords.length > 0) {
-      slides.push(this.generateSummarySlide(sermon, pointRecords, resolveTemplateId));
-    }
-
-    // Call to Action
-    if (sermon.ctaStyle !== 'none') {
-      updateProgress(10, 'Adding call to action...');
-      slides.push(this.generateInvitationSlide(sermon, resolveTemplateId));
-    }
+    const intent = this.normalizeDeckIntent(deckIntent);
+    const generated =
+      intent === 'social_summary'
+        ? this.generateSocialSummaryDeck(sermon, intensity, resolveTemplateId, updateProgress)
+        : this.generateSermonPresentationDeck(sermon, intensity, resolveTemplateId, updateProgress, intent);
 
     updateProgress(0, 'Deck generation complete!');
-    return slides;
+    return generated;
   }
 
   private generateTitleSlide(
@@ -177,6 +136,190 @@ export class SimpleDeckGenerationService {
       ),
       imagePrompt: `Biblical scene representing ${sermon.mainScriptureRef}`,
     };
+  }
+
+  private generateBigIdeaSlide(
+    sermon: Sermon,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
+    const bigIdea = this.limitText(this.asString(sermon.bigIdea || sermon.title), 120);
+    return {
+      type: SlideType.TRANSITION,
+      layoutKey: 'section_header_v1',
+      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
+      content: {
+        title: this.t(sermon, 'Big Idea', 'Gran idea'),
+        subtitle: bigIdea,
+      },
+      speakerNotes: this.t(
+        sermon,
+        `State the sermon center clearly: ${bigIdea}`,
+        `Enuncia el centro del sermón con claridad: ${bigIdea}`,
+      ),
+      imagePrompt: `Hopeful church background for sermon big idea: ${bigIdea}`,
+    };
+  }
+
+  private generateReflectionSlide(
+    sermon: Sermon,
+    question: string,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
+    return {
+      type: SlideType.TRANSITION,
+      layoutKey: 'section_header_v1',
+      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
+      content: {
+        title: this.t(sermon, 'Reflection', 'Reflexión'),
+        subtitle: this.limitText(question, 120),
+      },
+      speakerNotes: this.t(
+        sermon,
+        `Ask the congregation to reflect on: ${question}`,
+        `Invita a la iglesia a reflexionar sobre: ${question}`,
+      ),
+      imagePrompt: 'Quiet reflective church atmosphere',
+    };
+  }
+
+  private generateClosingSlide(
+    sermon: Sermon,
+    closingText: string,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
+    return {
+      type: SlideType.TRANSITION,
+      layoutKey: 'section_header_v1',
+      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
+      content: {
+        title: this.t(sermon, 'Closing', 'Cierre'),
+        subtitle: this.limitText(closingText, 120),
+      },
+      speakerNotes: this.t(
+        sermon,
+        `End with a pastoral summary: ${closingText}`,
+        `Cierra con un resumen pastoral: ${closingText}`,
+      ),
+      imagePrompt: 'Warm closing church background',
+    };
+  }
+
+  private generateSocialSummaryDeck(
+    sermon: Sermon,
+    intensity: DeckIntensity,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+    updateProgress: (increment: number, message: string) => void,
+  ): SlideContent[] {
+    const slides: SlideContent[] = [];
+    const pointRecords = this.buildPresentationPointRecords(sermon, 'social_summary').slice(0, 3);
+    updateProgress(15, 'Creating social summary title...');
+    slides.push(this.decorateSlide(this.generateTitleSlide(sermon, resolveTemplateId), sermon));
+
+    updateProgress(15, 'Creating social summary scripture slide...');
+    slides.push(this.decorateSlide(this.generateScriptureSlide(sermon, resolveTemplateId), sermon));
+
+    updateProgress(15, 'Creating social summary hook...');
+    slides.push(this.decorateSlide(this.generateBigIdeaSlide(sermon, resolveTemplateId), sermon));
+
+    const socialBullets = this.uniqueClean([
+      ...this.getApplicationBullets(sermon, pointRecords),
+      ...this.getQuestionBullets(sermon, pointRecords),
+    ]).slice(0, intensity === 'short' ? 3 : 4);
+    if (socialBullets.length > 0) {
+      updateProgress(20, 'Adding social summary response...');
+      slides.push(this.decorateSlide(this.generateApplicationSlide(sermon, socialBullets, 0, 1, resolveTemplateId), sermon));
+    }
+
+    if (sermon.ctaStyle !== 'none') {
+      updateProgress(15, 'Adding social summary invitation...');
+      slides.push(this.decorateSlide(this.generateInvitationSlide(sermon, resolveTemplateId), sermon));
+    } else {
+      slides.push(this.decorateSlide(this.generateClosingSlide(
+        sermon,
+        this.t(sermon, 'Share this message with someone who needs hope.', 'Comparte este mensaje con alguien que necesita esperanza.'),
+        resolveTemplateId,
+      ), sermon));
+    }
+
+    updateProgress(0, 'Deck generation complete!');
+    return slides.slice(0, 5);
+  }
+
+  private generateSermonPresentationDeck(
+    sermon: Sermon,
+    intensity: DeckIntensity,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+    updateProgress: (increment: number, message: string) => void,
+    intent: DeckIntentMode,
+  ): SlideContent[] {
+    const slides: SlideContent[] = [];
+    const pointRecords = this.buildPresentationPointRecords(sermon, intent).slice(0, 3);
+    const sermonTitle = this.buildPresentationDeckTitle(sermon, intent);
+
+    updateProgress(10, 'Creating sermon presentation title...');
+    slides.push(this.decorateSlide(this.generateTitleSlide({ ...sermon, title: sermonTitle }, resolveTemplateId), sermon));
+
+    if (sermon.mainScriptureRef) {
+      updateProgress(10, 'Adding scripture passage...');
+      slides.push(this.decorateSlide(this.generateScriptureSlide(sermon, resolveTemplateId), sermon));
+    }
+
+    updateProgress(8, 'Clarifying the big idea...');
+    slides.push(this.decorateSlide(this.generateBigIdeaSlide(sermon, resolveTemplateId), sermon));
+
+    const pointsProgress = pointRecords.length > 0 ? 36 / pointRecords.length : 0;
+    for (let i = 0; i < pointRecords.length; i++) {
+      updateProgress(pointsProgress, `Creating sermon point ${i + 1}...`);
+      const point = pointRecords[i];
+      slides.push(this.decorateSlide(this.generatePointSlide(sermon, point, i, resolveTemplateId), sermon));
+
+      const shouldIncludeSupport =
+        intensity === 'long' ||
+        (intensity === 'standard' && i < 2) ||
+        point.supportingVerses.length > 0 ||
+        point.illustrations.length > 0 ||
+        point.mediaSuggestions.length > 0;
+      if (shouldIncludeSupport) {
+        slides.push(this.decorateSlide(this.generatePointSupportSlide(point, i, resolveTemplateId), sermon));
+      }
+    }
+
+    const applicationBullets = this.getApplicationBullets(sermon, pointRecords);
+    if (applicationBullets.length > 0) {
+      updateProgress(10, 'Adding practical application...');
+      slides.push(this.decorateSlide(this.generateApplicationSlide(sermon, applicationBullets.slice(0, 4), 0, 1, resolveTemplateId), sermon));
+    }
+
+    const questionBullets = this.getQuestionBullets(sermon, pointRecords);
+    const reflectionQuestion =
+      questionBullets[0] ||
+      this.t(
+        sermon,
+        `Where do you need to trust ${this.asString(sermon.mainScriptureRef || sermon.bigIdea)} today?`,
+        `¿En qué necesitas confiar en ${this.asString(sermon.mainScriptureRef || sermon.bigIdea)} hoy?`,
+      );
+    updateProgress(8, 'Adding reflection slide...');
+    slides.push(this.decorateSlide(this.generateReflectionSlide(sermon, reflectionQuestion, resolveTemplateId), sermon));
+
+    if (sermon.ctaStyle !== 'none') {
+      updateProgress(12, 'Adding appeal...');
+      slides.push(this.decorateSlide(this.generateInvitationSlide(sermon, resolveTemplateId), sermon));
+    }
+
+    updateProgress(7, 'Adding closing slide...');
+    slides.push(
+      this.decorateSlide(
+        this.generateClosingSlide(
+          sermon,
+          this.buildClosingLine(sermon, intent),
+          resolveTemplateId,
+        ),
+        sermon,
+      ),
+    );
+
+    updateProgress(0, 'Deck generation complete!');
+    return slides;
   }
 
   private generateIntroductionSlide(
@@ -238,6 +381,69 @@ export class SimpleDeckGenerationService {
       },
       speakerNotes,
       imagePrompt: `Visual representation of: ${fullTitle}`,
+    };
+  }
+
+  private decorateSlide(slide: SlideContent, sermon: Sermon): SlideContent {
+    const content = { ...(slide.content || {}) };
+
+    if (slide.type === SlideType.TITLE) {
+      content.title = shortenText(content.title || sermon.title || 'Untitled Sermon', 48);
+      content.subtitle = shortenText(content.subtitle || sermon.seriesTitle || sermon.bigIdea || '', 88);
+    }
+
+    if (slide.type === SlideType.SCRIPTURE) {
+      const ref = shortenText(content.reference || sermon.mainScriptureRef || 'Scripture', 42);
+      const text = Array.isArray(content.lines) ? content.lines.join(' ') : cleanText(content.lines || content.text || '');
+      const lines = splitPassageText(text || sermon.outline?.structure?.scriptureText || sermon.bigIdea || ref, 3);
+      content.reference = ref;
+      content.lines = lines.length ? lines : splitTextIntoLines(text || ref, 3, 42);
+    }
+
+    if (slide.type === SlideType.POINT) {
+      content.title = shortenText(content.title || sermon.bigIdea || 'Point', 52);
+      const bullets = Array.isArray(content.bullets) ? content.bullets : [];
+      content.bullets = normalizeBulletList(bullets, { maxBullets: 4, maxChars: 68 });
+      if (!content.bullets.length && content.title) {
+        content.bullets = [shortenText(content.title, 68)];
+      }
+    }
+
+    if (slide.type === SlideType.APPLICATION) {
+      content.title = shortenText(content.title || 'Application', 40);
+      const bullets = Array.isArray(content.bullets) ? content.bullets : [];
+      content.bullets = normalizeBulletList(bullets, { maxBullets: 3, maxChars: 56 });
+    }
+
+    if (slide.type === SlideType.INVITATION) {
+      content.title = shortenText(content.title || 'Respond', 42);
+      content.message = shortenText(content.message || sermon.ctaStyle || 'Respond in faith.', 140);
+    }
+
+    if (slide.type === SlideType.SUPPORT) {
+      if (content.title) content.title = shortenText(content.title, 46);
+      if (Array.isArray(content.left)) content.left = normalizeBulletList(content.left, { maxBullets: 4, maxChars: 64 });
+      if (Array.isArray(content.right)) content.right = normalizeBulletList(content.right, { maxBullets: 4, maxChars: 64 });
+    }
+
+    if (slide.type === SlideType.TRANSITION || slide.type === SlideType.ANNOUNCEMENT || slide.type === SlideType.PRAYER) {
+      if (content.title) content.title = shortenText(content.title, 44);
+      if (content.subtitle) content.subtitle = shortenText(content.subtitle, 72);
+      if (content.body) content.body = shortenText(content.body, 160);
+      if (content.caption) content.caption = shortenText(content.caption, 120);
+      if (Array.isArray(content.lines)) content.lines = splitTextIntoLines(content.lines.join(' '), 3, 46);
+    }
+
+    content.__styles = {
+      ...(content.__styles || {}),
+      ...buildSlideStyleDefaults(slide.type, content),
+    };
+
+    return {
+      ...slide,
+      content,
+      speakerNotes: shortenText(slide.speakerNotes || '', 800),
+      imagePrompt: shortenText(slide.imagePrompt || '', 240),
     };
   }
 
@@ -536,6 +742,358 @@ export class SimpleDeckGenerationService {
       );
   }
 
+  private buildPresentationPointRecords(sermon: Sermon, intent: DeckIntentMode): PointRecord[] {
+    const records = this.buildPointRecords(sermon);
+    const normalized = records.slice(0, 3);
+    while (normalized.length < 3) {
+      normalized.push(this.buildSyntheticPresentationPoint(sermon, normalized.length, intent));
+    }
+
+    return normalized.map((record, index) => {
+      if (record.supportingVerses.length > 0 || record.applications.length > 0 || record.questions.length > 0) {
+        return record;
+      }
+      const fallback = this.buildSyntheticPresentationPoint(sermon, index, intent);
+      return {
+        ...record,
+        summary: record.summary || fallback.summary,
+        subpoints: record.subpoints.length ? record.subpoints : fallback.subpoints,
+        supportingVerses: record.supportingVerses.length ? record.supportingVerses : fallback.supportingVerses,
+        applications: record.applications.length ? record.applications : fallback.applications,
+        questions: record.questions.length ? record.questions : fallback.questions,
+        illustrations: record.illustrations.length ? record.illustrations : fallback.illustrations,
+        mediaSuggestions: record.mediaSuggestions.length ? record.mediaSuggestions : fallback.mediaSuggestions,
+      };
+    });
+  }
+
+  private buildSyntheticPresentationPoint(sermon: Sermon, index: number, intent: DeckIntentMode): PointRecord {
+    const ref = this.asString(sermon.mainScriptureRef);
+    const title = this.buildSyntheticPointTitle(ref, intent, index, sermon);
+    const summary = this.buildSyntheticPointSummary(ref, intent, index, sermon);
+    const supportingVerses = ref ? [ref] : [];
+    const applications = [this.buildSyntheticPointApplication(ref, intent, index, sermon)];
+    const questions = [this.buildSyntheticPointQuestion(ref, intent, index, sermon)];
+    const illustrations = [this.buildSyntheticPointIllustration(ref, intent, index, sermon)];
+    const mediaSuggestions = [this.buildSyntheticPointMedia(ref, intent, index, sermon)];
+
+    return {
+      title,
+      slideTitle: this.extractShortTitle(title),
+      summary,
+      subpoints: this.buildSyntheticPointBullets(ref, intent, index, sermon),
+      supportingVerses,
+      applications,
+      questions,
+      illustrations,
+      mediaSuggestions,
+    };
+  }
+
+  private buildSyntheticPointTitle(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        'God loved first',
+        'God gave His Son',
+        'Faith receives life',
+      ][index] || `Point ${index + 1}`;
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        'The everlasting gospel',
+        'Worship the Creator',
+        'Faithfulness follows Jesus',
+      ][index] || `Point ${index + 1}`;
+    }
+    if (/daniel\s*7|daniel\s*8|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return [
+        'Stay text-bound',
+        'Keep Christ central',
+        'Call for faithful response',
+      ][index] || `Point ${index + 1}`;
+    }
+
+    if (intent === 'social_summary') {
+      return [
+        this.asString(sermon.bigIdea || sermon.title || 'The message'),
+        this.asString(sermon.mainScriptureRef || 'Scripture'),
+        'Respond in faith',
+      ][index] || `Point ${index + 1}`;
+    }
+
+    return [
+      this.extractShortTitle(this.asString(sermon.bigIdea || sermon.title || 'God speaks')),
+      'What God gives',
+      'How we respond',
+    ][index] || `Point ${index + 1}`;
+  }
+
+  private buildSyntheticPointSummary(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        'God takes the first step in love.',
+        'The gift reveals the Father’s heart.',
+        'Belief is trust that receives life.',
+      ][index] || this.asString(sermon.bigIdea);
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        'The gospel is still the starting point.',
+        'True worship answers the Creator’s call.',
+        'Faithfulness belongs with faith in Jesus.',
+      ][index] || this.asString(sermon.bigIdea);
+    }
+    if (/daniel\s*7|daniel\s*8|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return [
+        'Keep every claim text-bound and Christ-centered.',
+        'Show the prophetic pattern without fear.',
+        'Invite faithful response, not speculation.',
+      ][index] || this.asString(sermon.bigIdea);
+    }
+
+    if (intent === 'social_summary') {
+      return [
+        this.asString(sermon.bigIdea || sermon.title || 'A clear message'),
+        this.asString(ref || sermon.mainScriptureRef || 'A key passage'),
+        'A warm invitation to respond.',
+      ][index] || this.asString(sermon.bigIdea || sermon.title);
+    }
+
+    return [
+      this.asString(sermon.bigIdea || sermon.title || 'God speaks'),
+      this.asString(ref || 'The passage'),
+      'A practical response to God’s word.',
+    ][index] || this.asString(sermon.bigIdea || sermon.title);
+  }
+
+  private buildSyntheticPointBullets(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string[] {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        ['God loved before we responded.', 'Grace begins with His initiative.'],
+        ['The Son was given for us.', 'The gift reveals the Father’s heart.'],
+        ['Faith receives what grace offers.', 'Trust is the door to eternal life.'],
+      ][index] || ['Receive the gift of life.'];
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        ['The everlasting gospel still leads.', 'Grace comes before judgment.'],
+        ['True worship belongs to the Creator.', 'Loyalty is a faith response.'],
+        ['Faithful people follow Jesus.', 'Commandments and faith belong together.'],
+      ][index] || ['Respond with worship and trust.'];
+    }
+    if (/daniel\s*7|daniel\s*8|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return [
+        ['Stay close to the text.', 'Do not force speculative claims.'],
+        ['Keep Christ at the center.', 'Let the passage point to hope.'],
+        ['Call for faithful response.', 'Hope should shape the appeal.'],
+      ][index] || ['Keep the message text-bound.'];
+    }
+
+    if (intent === 'social_summary') {
+      return [
+        ['One clear takeaway for today.'],
+        ['A passage worth sharing.'],
+        ['Invite someone to listen.'],
+      ][index] || ['Use this as a teaser.'];
+    }
+
+    return [
+      ['Let the passage shape the message.', 'Keep the main idea simple.'],
+      ['Point the congregation to Christ.', 'Show how grace works.'],
+      ['End with a clear response.', 'Invite trust, not pressure.'],
+    ][index] || ['Keep it simple and clear.'];
+  }
+
+  private buildSyntheticPointApplication(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        'Receive God’s love personally.',
+        'Speak about the Son’s gift clearly.',
+        'Trust Christ for eternal life today.',
+      ][index] || 'Respond in faith today.';
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        'Keep the gospel first.',
+        'Practice worship that is loyal and hopeful.',
+        'Follow Jesus with steady faithfulness.',
+      ][index] || 'Respond with faithful worship.';
+    }
+
+    if (intent === 'social_summary') {
+      return 'Share the invitation with someone this week.';
+    }
+
+    return 'Live the message in a concrete way this week.';
+  }
+
+  private buildSyntheticPointQuestion(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        'Where do I need to trust God’s love first?',
+        'How am I receiving the Son’s gift?',
+        'Who needs to hear this good news from me?',
+      ][index] || 'Where do I need to trust His love?';
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        'Am I keeping the gospel first?',
+        'What competes for my worship?',
+        'How will I follow Jesus this week?',
+      ][index] || 'What does faithful response look like?';
+    }
+    if (/daniel\s*7|daniel\s*8|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return [
+        'What must stay text-bound here?',
+        'How does this point to Christ?',
+        'What faithful response is needed?',
+      ][index] || 'What does the passage require from me?';
+    }
+
+    if (intent === 'social_summary') {
+      return 'Who should I invite to hear this message?';
+    }
+
+    return 'Where is God calling for response?';
+  }
+
+  private buildSyntheticPointIllustration(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        'A parent reaching out first in love.',
+        'A costly gift placed into open hands.',
+        'A person trusting a promise they can receive.',
+      ][index] || 'A hopeful response to grace.';
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        'A global invitation announced with grace.',
+        'A worship service centered on God the Creator.',
+        'A believer walking faithfully behind Jesus.',
+      ][index] || 'A faithful response to God’s call.';
+    }
+    if (/daniel\s*7|daniel\s*8|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return [
+        'A map that keeps the traveler on the road.',
+        'A compass that points to the true King.',
+        'A church choosing hope over fear.',
+      ][index] || 'A clear response to the text.';
+    }
+
+    return 'A clear picture that helps the church remember the point.';
+  }
+
+  private buildSyntheticPointMedia(
+    ref: string,
+    intent: DeckIntentMode,
+    index: number,
+    sermon: Sermon,
+  ): string {
+    const source = `${ref} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return [
+        'Warm sunrise background with open hands.',
+        'Gift and light imagery with ample negative space.',
+        'Open path toward light and hope.',
+      ][index] || 'Peaceful church-themed background.';
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return [
+        'Hopeful horizon with a gentle gospel light.',
+        'Creator-focused imagery with calm reverence.',
+        'Faithful path imagery, not fear-based symbolism.',
+      ][index] || 'Reverent, hope-filled prophetic background.';
+    }
+    if (intent === 'social_summary') {
+      return 'Clean social promo background with strong contrast.';
+    }
+    return 'Church-ready visual support with simple symbolism.';
+  }
+
+  private buildPresentationDeckTitle(sermon: Sermon, intent: DeckIntentMode): string {
+    const title = this.asString(sermon.title || sermon.bigIdea || 'Untitled Sermon');
+    const source = `${title} ${this.asString(sermon.mainScriptureRef)} ${this.asString(sermon.bigIdea)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return 'The Love That Gives';
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return 'The Everlasting Gospel Still Calls';
+    }
+    if (intent === 'evangelistic_appeal') {
+      return 'A Clear Call to Respond';
+    }
+    if (intent === 'teaching_study') {
+      return 'Study the Word Together';
+    }
+    if (intent === 'youth_message') {
+      return 'Follow Jesus with Confidence';
+    }
+    return title;
+  }
+
+  private buildClosingLine(sermon: Sermon, intent: DeckIntentMode): string {
+    const source = `${this.asString(sermon.mainScriptureRef)} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)}`.toLowerCase();
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return 'God’s love still gives eternal life.';
+    }
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return 'The Lamb leads His people faithfully.';
+    }
+    if (intent === 'social_summary') {
+      return 'Share the message and invite someone in.';
+    }
+    return 'Close with hope, prayer, and trust in God’s word.';
+  }
+
+  private normalizeDeckIntent(value: string): DeckIntentMode {
+    const normalized = String(value || '').toLowerCase().trim();
+    if (
+      normalized === 'social_summary' ||
+      normalized === 'teaching_study' ||
+      normalized === 'youth_message' ||
+      normalized === 'evangelistic_appeal'
+    ) {
+      return normalized;
+    }
+    return 'sermon_presentation';
+  }
+
   private normalizePointRecord(point: any, index: number, fallbackTitle?: string): PointRecord {
     const title =
       this.asString(point?.title) ||
@@ -567,20 +1125,20 @@ export class SimpleDeckGenerationService {
     const maxBulletLen = 70;
     
     if (point.summary && !this.hasEquivalentBullet([point.title], point.summary)) {
-      bullets.push(this.limitText(this.asString(point.summary), maxBulletLen));
+      bullets.push(formatPresentationSentence(this.limitText(this.asString(point.summary), maxBulletLen), maxBulletLen));
     }
     bullets.push(
       ...point.subpoints
-        .map((item) => this.limitText(this.asString(item), maxBulletLen))
+        .map((item) => formatPresentationSentence(this.limitText(this.asString(item), maxBulletLen), maxBulletLen))
         .filter((item) => !this.hasEquivalentBullet([point.title, point.summary || ''], item)),
     );
     if (point.supportingVerses.length > 0) {
       const versesText = point.supportingVerses.slice(0, 2).join(', ');
-      bullets.push(this.limitText(`${isSpanish ? 'Textos clave' : 'Key texts'}: ${versesText}`, maxBulletLen));
+      bullets.push(formatPresentationSentence(`${isSpanish ? 'Textos clave' : 'Key texts'}: ${versesText}`, maxBulletLen));
     }
     if (point.applications.length > 0) {
       const appText = this.asString(point.applications[0]);
-      bullets.push(this.limitText(`${isSpanish ? 'Aplicación' : 'Application'}: ${appText}`, maxBulletLen));
+      bullets.push(formatPresentationSentence(`${isSpanish ? 'Aplicación' : 'Application'}: ${appText}`, maxBulletLen));
     }
 
     return this.dedupeSemanticBullets(this.uniqueClean(bullets)).slice(0, 4);
@@ -624,9 +1182,9 @@ export class SimpleDeckGenerationService {
     const verses = point.supportingVerses.slice(0, 4);
     const illustrations = point.illustrations.slice(0, 2);
     const bullets = this.uniqueClean([
-      ...verses.map((verse) => `${isSpanish ? 'Texto clave' : 'Key text'}: ${verse}`),
-      ...illustrations.map((item) => `${isSpanish ? 'Ilustración' : 'Illustration'}: ${this.asString(item)}`),
-      ...point.mediaSuggestions.slice(0, 1).map((item) => `${isSpanish ? 'Apoyo visual' : 'Visual support'}: ${this.asString(item)}`),
+      ...verses.map((verse) => formatPresentationSentence(`${isSpanish ? 'Texto clave' : 'Key text'}: ${verse}`, 72)),
+      ...illustrations.map((item) => formatPresentationSentence(`${isSpanish ? 'Ilustración' : 'Illustration'}: ${this.asString(item)}`, 72)),
+      ...point.mediaSuggestions.slice(0, 1).map((item) => formatPresentationSentence(`${isSpanish ? 'Apoyo visual' : 'Visual support'}: ${this.asString(item)}`, 72)),
     ]).slice(0, 5);
 
     return {
@@ -653,8 +1211,8 @@ export class SimpleDeckGenerationService {
       [point.title, point.summary, ...point.subpoints, ...point.applications].filter(Boolean).join(' ')
     );
     const bullets = this.uniqueClean([
-      ...point.applications.map((item) => this.asString(item)),
-      ...point.questions.slice(0, 2).map((item) => `${isSpanish ? 'Pregunta' : 'Question'}: ${this.asString(item)}`),
+      ...point.applications.map((item) => formatPresentationSentence(this.asString(item), 72)),
+      ...point.questions.slice(0, 2).map((item) => formatPresentationSentence(`${isSpanish ? 'Pregunta' : 'Question'}: ${this.asString(item)}`, 72)),
     ]).slice(0, 5);
 
     return {
@@ -679,7 +1237,7 @@ export class SimpleDeckGenerationService {
   ): SlideContent {
     const bullets = pointRecords
       .slice(0, 5)
-      .map((point, index) => `${index + 1}) ${this.limitText(point.title, 90)}`);
+      .map((point, index) => formatPresentationSentence(`${index + 1}. ${this.limitText(point.title, 90)}`, 96));
 
     return {
       type: SlideType.TRANSITION,
@@ -798,7 +1356,7 @@ export class SimpleDeckGenerationService {
     if (!text || typeof text !== 'string') return '';
     
     // Remove HTML tags completely
-    let clean = text
+    const clean = text
       // Remove script/style tags and their content
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -928,19 +1486,48 @@ export class SimpleDeckGenerationService {
     if (directText) return this.limitText(directText, 540);
 
     const intro = this.extractIntroductionText(sermon);
+    const passageFocus = this.buildPassageFocusSentence(sermon);
     if (intro) {
+      const introFocus = this.limitText(intro, 220);
       return this.t(
         sermon,
-        `Main passage focus: ${this.limitText(intro, 220)}`,
-        `Enfoque del pasaje principal: ${this.limitText(intro, 220)}`,
+        `Read this passage with the congregation. ${introFocus}`,
+        `Lea este pasaje con la congregación. ${introFocus}`,
       );
     }
 
     return this.t(
       sermon,
-      'Read this passage with the congregation and emphasize the central message before moving to the outline points.',
-      'Lea este pasaje con la congregación y enfatice el mensaje central antes de pasar a los puntos del bosquejo.',
+      `Read this passage with the congregation. ${passageFocus}`,
+      `Lea este pasaje con la congregación. ${passageFocus}`,
     );
+  }
+
+  private buildPassageFocusSentence(sermon: Sermon): string {
+    const source = `${this.asString(sermon.mainScriptureRef)} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${this.asString(sermon.notes)}`.toLowerCase();
+    const isSpanish = this.isSpanishWorkspace(sermon);
+
+    if (/john\s*3:16|juan\s*3:16/.test(source)) {
+      return isSpanish
+        ? 'Resalte que el amor de Dios tomó la iniciativa y ofrece vida eterna.'
+        : 'Emphasize that God’s love takes the first step and offers eternal life.';
+    }
+
+    if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
+      return isSpanish
+        ? 'Resalte el evangelio eterno, la adoración al Creador y la fidelidad a Jesús.'
+        : 'Emphasize the everlasting gospel, worship of the Creator, and faithfulness to Jesus.';
+    }
+
+    if (/daniel\s*7|daniel\s*8|revelation\s*12|revelation\s*18|matthew\s*24|exodus\s*20/.test(source)) {
+      return isSpanish
+        ? 'Mantenga el texto en su contexto profético y apunte siempre a Cristo.'
+        : 'Keep the text in its prophetic context and point always to Christ.';
+    }
+
+    return isSpanish
+      ? 'Enfatice el mensaje central y la respuesta de fe que este pasaje llama.'
+      : 'Emphasize the central message and the faith response this passage calls for.';
   }
 
   private isSpanishWorkspace(sermon: Sermon): boolean {

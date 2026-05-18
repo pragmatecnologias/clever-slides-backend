@@ -9,6 +9,7 @@ import { BrandTheme } from '../../entities/brand-theme.entity';
 import { Export } from '../../entities/export.entity';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { RegenerateDeckDto } from './dto/regenerate-deck.dto';
+import { DeckIntent } from './dto/create-deck.dto';
 
 @Injectable()
 export class DecksService {
@@ -73,6 +74,7 @@ export class DecksService {
       generationProvider: 'lmstudio',
       templatePackId: createDeckDto.templatePackId || theme.defaultTemplatePackId,
       templatePlan: createDeckDto.templatePlan,
+      deckIntent: createDeckDto.deckIntent || DeckIntent.SERMON_PRESENTATION,
     });
 
     const savedDeck = await this.deckRepository.save(deck);
@@ -80,6 +82,7 @@ export class DecksService {
     await this.deckGenerationQueue.add('generate', {
       deckId: savedDeck.id,
       deckSize: createDeckDto.deckSize || 'standard',
+      deckIntent: createDeckDto.deckIntent || DeckIntent.SERMON_PRESENTATION,
       templatePlan: createDeckDto.templatePlan,
       templatePackId: createDeckDto.templatePackId || theme.defaultTemplatePackId,
       backgroundProvider: createDeckDto.backgroundProvider || 'local',
@@ -143,12 +146,17 @@ export class DecksService {
       deck.templatePlan = regenerateDto.templatePlan;
     }
 
+    if (regenerateDto?.deckIntent) {
+      deck.deckIntent = regenerateDto.deckIntent;
+    }
+
     deck.status = DeckStatus.GENERATING;
     await this.deckRepository.save(deck);
 
     await this.deckGenerationQueue.add('generate', {
       deckId: deck.id,
       deckSize: 'standard',
+      deckIntent: deck.deckIntent || DeckIntent.SERMON_PRESENTATION,
       templatePlan: deck.templatePlan,
       templatePackId: deck.templatePackId,
     });

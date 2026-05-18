@@ -4,6 +4,7 @@ import axios from 'axios';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import puppeteer from 'puppeteer';
+import { cleanText, estimateFontSize, splitTextIntoLines } from '../llm/slide-content-formatting';
 
 type SocialLike = {
   prompt?: string | null;
@@ -89,6 +90,21 @@ export class SocialHtmlRendererService {
     } finally {
       await browser.close();
     }
+  }
+
+  private scaleText(text: string, base: number, min: number, maxCharsPerLine: number, maxLines: number) {
+    const safe = cleanText(text);
+    return estimateFontSize(safe, base, min, maxCharsPerLine, maxLines);
+  }
+
+  private renderLines(text: string, maxLines: number, maxCharsPerLine: number) {
+    return splitTextIntoLines(text, maxLines, maxCharsPerLine)
+      .map((line) => this.escapeHtml(line))
+      .join('<br/>');
+  }
+
+  private renderInline(text: string, maxCharsPerLine: number) {
+    return this.renderLines(text, 1, maxCharsPerLine);
   }
 
   private resolveTemplateKey(overlay: Record<string, any>, width: number, height: number): string {
@@ -241,6 +257,11 @@ export class SocialHtmlRendererService {
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
     const hashtagsLine = metaLines.find(l => l.includes('#')) || '';
     const otherMeta = metaLines.filter(l => !l.includes('#')).slice(0, 2);
+    const titleSize = this.scaleText(title, 74, 38, 18, 2);
+    const subtitleSize = this.scaleText(subtitle, 34, 22, 18, 2);
+    const bodySize = this.scaleText(body, 28, 20, 20, 3);
+    const inviteSize = this.scaleText(invitation, 24, 18, 22, 2);
+    const metaSize = this.scaleText(otherMeta.join(' '), 18, 14, 22, 2);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -292,19 +313,19 @@ export class SocialHtmlRendererService {
       padding: 60px 55px 60px 80px;
     }
     .title-text {
-      font-size: 78px;
+      font-size: ${titleSize}px;
       margin-bottom: 24px;
       line-height: 1.0;
     }
     .subtitle-text {
-      font-size: 36px;
+      font-size: ${subtitleSize}px;
       color: #fbbf24;
       margin-bottom: 32px;
       font-weight: 700;
       letter-spacing: 0.02em;
     }
     .body-text {
-      font-size: 30px;
+      font-size: ${bodySize}px;
       line-height: 1.45;
       color: rgba(255,255,255,0.92);
       max-width: 95%;
@@ -314,7 +335,7 @@ export class SocialHtmlRendererService {
       background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.4) 100%);
     }
     .invitation-text {
-      font-size: 26px;
+      font-size: ${inviteSize}px;
       font-weight: 600;
       margin-bottom: 20px;
       line-height: 1.4;
@@ -324,7 +345,7 @@ export class SocialHtmlRendererService {
       display: flex;
       flex-wrap: wrap;
       gap: 8px 24px;
-      font-size: 20px;
+      font-size: ${metaSize}px;
       color: rgba(255,255,255,0.7);
     }
     .meta-row span {
@@ -351,13 +372,13 @@ export class SocialHtmlRendererService {
     <div class="container">
       <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
       <div class="main-content">
-        <h1 class="title-text">${this.escapeHtml(title)}</h1>
-        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
-        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+        <h1 class="title-text">${this.renderLines(title, 2, 18)}</h1>
+        ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, 20)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.renderLines(body, 3, 22)}</p>` : ''}
       </div>
       <div class="bottom-section">
-        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
-        <div class="meta-row">${otherMeta.map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+        ${invitation ? `<div class="invitation-text">${this.renderLines(invitation, 2, 24)}</div>` : ''}
+        <div class="meta-row">${otherMeta.map(l => `<span>${this.renderInline(l, 24)}</span>`).join('')}</div>
         ${hashtagsLine ? `<div class="hashtags">${this.escapeHtml(hashtagsLine)}</div>` : ''}
       </div>
     </div>
@@ -378,6 +399,10 @@ export class SocialHtmlRendererService {
   }): string {
     const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const titleSize = this.scaleText(title, 96, 44, 14, 2);
+    const subtitleSize = this.scaleText(subtitle, 52, 28, 16, 2);
+    const bodySize = this.scaleText(body, 40, 24, 18, 3);
+    const inviteSize = this.scaleText(invitation, 36, 22, 20, 2);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -413,7 +438,7 @@ export class SocialHtmlRendererService {
       padding: 80px 55px;
     }
     .title-text {
-      font-size: 96px;
+      font-size: ${titleSize}px;
       margin-bottom: 40px;
       line-height: 1.0;
     }
@@ -424,13 +449,13 @@ export class SocialHtmlRendererService {
       margin-bottom: 45px;
     }
     .subtitle-text {
-      font-size: 52px;
+      font-size: ${subtitleSize}px;
       color: #fbbf24;
       margin-bottom: 50px;
       font-weight: 700;
     }
     .body-text {
-      font-size: 40px;
+      font-size: ${bodySize}px;
       line-height: 1.5;
       max-width: 92%;
       color: rgba(255,255,255,0.92);
@@ -441,7 +466,7 @@ export class SocialHtmlRendererService {
       background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 100%);
     }
     .invitation-text {
-      font-size: 36px;
+      font-size: ${inviteSize}px;
       font-weight: 600;
       margin-bottom: 35px;
       line-height: 1.4;
@@ -460,13 +485,13 @@ export class SocialHtmlRendererService {
     <div class="container">
       <div class="top-section">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
       <div class="center-content">
-        <h1 class="title-text">${this.escapeHtml(title)}</h1>
+        <h1 class="title-text">${this.renderLines(title, 2, 14)}</h1>
         <div class="divider"></div>
-        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
-        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+        ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, 16)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.renderLines(body, 3, 18)}</p>` : ''}
       </div>
       <div class="bottom-section">
-        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+        ${invitation ? `<div class="invitation-text">${this.renderLines(invitation, 2, 18)}</div>` : ''}
         <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
       </div>
     </div>
@@ -487,6 +512,8 @@ export class SocialHtmlRendererService {
   }): string {
     const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, churchName } = input;
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const titleSize = this.scaleText(title, 68, 40, 18, 2);
+    const subtitleSize = this.scaleText(subtitle, 32, 22, 18, 2);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -528,13 +555,13 @@ export class SocialHtmlRendererService {
       color: rgba(255,255,255,0.9);
     }
     .title-text {
-      font-size: 68px;
+      font-size: ${titleSize}px;
       line-height: 1.05;
       margin-bottom: 20px;
       max-width: 85%;
     }
     .subtitle-text {
-      font-size: 32px;
+      font-size: ${subtitleSize}px;
       color: #fbbf24;
       display: inline-block;
       padding: 10px 24px;
@@ -547,8 +574,8 @@ export class SocialHtmlRendererService {
     <div class="yt-accent"></div>
     <div class="content-wrapper">
       <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
-      <h1 class="title-text">${this.escapeHtml(title)}</h1>
-      ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
+      <h1 class="title-text">${this.renderLines(title, 2, 18)}</h1>
+      ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, 18)}</div>` : ''}
     </div>
     </body></html>`;
   }
@@ -567,6 +594,10 @@ export class SocialHtmlRendererService {
   }): string {
     const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const titleSize = this.scaleText(title, 68, 34, 18, 2);
+    const subtitleSize = this.scaleText(subtitle, 36, 22, 20, 2);
+    const bodySize = this.scaleText(body, 28, 18, 22, 3);
+    const inviteSize = this.scaleText(invitation, 24, 18, 24, 2);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -610,18 +641,18 @@ export class SocialHtmlRendererService {
       color: #fff;
     }
     .title-text {
-      font-size: 68px;
+      font-size: ${titleSize}px;
       line-height: 1.05;
       margin-bottom: 22px;
     }
     .subtitle-text {
-      font-size: 36px;
+      font-size: ${subtitleSize}px;
       color: #60a5fa;
       margin-bottom: 24px;
       text-shadow: 0 2px 15px rgba(96,165,250,0.4);
     }
     .body-text {
-      font-size: 28px;
+      font-size: ${bodySize}px;
       line-height: 1.4;
       max-width: 85%;
       margin-bottom: 28px;
@@ -635,7 +666,7 @@ export class SocialHtmlRendererService {
     }
     .invitation-text {
       margin-top: 24px;
-      font-size: 24px;
+      font-size: ${inviteSize}px;
       font-weight: 600;
       color: #fff;
       line-height: 1.4;
@@ -645,11 +676,11 @@ export class SocialHtmlRendererService {
     <div class="fb-accent"></div>
     <div class="content-wrapper">
       <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
-      <h1 class="title-text">${this.escapeHtml(title)}</h1>
-      ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
-      ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
-      <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
-      ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+      <h1 class="title-text">${this.renderLines(title, 2, 18)}</h1>
+      ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, 20)}</div>` : ''}
+      ${body ? `<p class="body-text">${this.renderLines(body, 3, 22)}</p>` : ''}
+      <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.renderInline(l, 24)}</span>`).join('')}</div>
+      ${invitation ? `<div class="invitation-text">${this.renderLines(invitation, 2, 24)}</div>` : ''}
     </div>
     </body></html>`;
   }
@@ -668,6 +699,10 @@ export class SocialHtmlRendererService {
   }): string {
     const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const titleSize = this.scaleText(title, 88, 42, 16, 2);
+    const subtitleSize = this.scaleText(subtitle, 44, 24, 18, 2);
+    const bodySize = this.scaleText(body, 36, 22, 20, 3);
+    const inviteSize = this.scaleText(invitation, 32, 20, 22, 2);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -705,18 +740,18 @@ export class SocialHtmlRendererService {
       padding: 50px;
     }
     .title-text {
-      font-size: 88px;
+      font-size: ${titleSize}px;
       margin-bottom: 30px;
       line-height: 1.0;
     }
     .subtitle-text {
-      font-size: 44px;
+      font-size: ${subtitleSize}px;
       color: #25D366;
       margin-bottom: 40px;
       text-shadow: 0 3px 25px rgba(37,211,102,0.5);
     }
     .body-text {
-      font-size: 36px;
+      font-size: ${bodySize}px;
       line-height: 1.4;
       max-width: 90%;
     }
@@ -726,7 +761,7 @@ export class SocialHtmlRendererService {
       background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.5) 100%);
     }
     .invitation-text {
-      font-size: 32px;
+      font-size: ${inviteSize}px;
       font-weight: 600;
       margin-bottom: 28px;
       line-height: 1.35;
@@ -743,12 +778,12 @@ export class SocialHtmlRendererService {
     <div class="container">
       <div class="top-section">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
       <div class="center-content">
-        <h1 class="title-text">${this.escapeHtml(title)}</h1>
-        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
-        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+        <h1 class="title-text">${this.renderLines(title, 2, 16)}</h1>
+        ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, 18)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.renderLines(body, 3, 20)}</p>` : ''}
       </div>
       <div class="bottom-section">
-        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+        ${invitation ? `<div class="invitation-text">${this.renderLines(invitation, 2, 22)}</div>` : ''}
         <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
       </div>
     </div>
@@ -769,6 +804,10 @@ export class SocialHtmlRendererService {
   }): string {
     const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
+    const titleSize = this.scaleText(title, 64, 34, 18, 2);
+    const subtitleSize = this.scaleText(subtitle, 34, 20, 18, 2);
+    const bodySize = this.scaleText(body, 26, 18, 22, 3);
+    const inviteSize = this.scaleText(invitation, 22, 16, 22, 2);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -812,18 +851,18 @@ export class SocialHtmlRendererService {
       color: #fff;
     }
     .title-text {
-      font-size: 64px;
+      font-size: ${titleSize}px;
       line-height: 1.05;
       margin-bottom: 22px;
     }
     .subtitle-text {
-      font-size: 34px;
+      font-size: ${subtitleSize}px;
       color: #1DA1F2;
       margin-bottom: 24px;
       text-shadow: 0 2px 15px rgba(29,161,242,0.4);
     }
     .body-text {
-      font-size: 26px;
+      font-size: ${bodySize}px;
       line-height: 1.4;
       max-width: 85%;
       margin-bottom: 28px;
@@ -837,7 +876,7 @@ export class SocialHtmlRendererService {
     }
     .invitation-text {
       margin-top: 24px;
-      font-size: 22px;
+      font-size: ${inviteSize}px;
       font-weight: 600;
       color: #fff;
       line-height: 1.4;
@@ -847,11 +886,11 @@ export class SocialHtmlRendererService {
     <div class="x-accent"></div>
     <div class="content-wrapper">
       <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
-      <h1 class="title-text">${this.escapeHtml(title)}</h1>
-      ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
-      ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
-      <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
-      ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
+      <h1 class="title-text">${this.renderLines(title, 2, 18)}</h1>
+      ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, 18)}</div>` : ''}
+      ${body ? `<p class="body-text">${this.renderLines(body, 3, 22)}</p>` : ''}
+      <div class="meta-row">${metaLines.slice(0, 3).map(l => `<span>${this.renderInline(l, 24)}</span>`).join('')}</div>
+      ${invitation ? `<div class="invitation-text">${this.renderLines(invitation, 2, 22)}</div>` : ''}
     </div>
     </body></html>`;
   }
@@ -872,6 +911,11 @@ export class SocialHtmlRendererService {
     const { width, height, backgroundDataUrl, logoDataUrl, title, subtitle, body, invitation, churchName, metaLines } = input;
     const logoHtml = logoDataUrl ? `<img class="logo" src="${logoDataUrl}" alt="" />` : '';
     const isVertical = height > width;
+    const titleSize = this.scaleText(title, isVertical ? 72 : 58, isVertical ? 52 : 42, isVertical ? 14 : 18, 2);
+    const subtitleSize = this.scaleText(subtitle, isVertical ? 36 : 30, isVertical ? 28 : 24, isVertical ? 18 : 22, 2);
+    const bodySize = this.scaleText(body, isVertical ? 30 : 24, isVertical ? 24 : 20, isVertical ? 18 : 24, 3);
+    const inviteSize = this.scaleText(invitation, isVertical ? 28 : 22, isVertical ? 22 : 18, isVertical ? 18 : 22, 2);
+    const metaSize = this.scaleText(metaLines.join(' '), isVertical ? 20 : 18, 16, isVertical ? 20 : 24, 3);
 
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>
     ${this.getBaseStyles(width, height, backgroundDataUrl)}
@@ -908,18 +952,18 @@ export class SocialHtmlRendererService {
       ${isVertical ? 'padding: 40px 0;' : ''}
     }
     .title-text {
-      font-size: ${isVertical ? '80px' : '62px'};
+      font-size: ${titleSize}px;
       margin-bottom: 22px;
       line-height: 1.05;
     }
     .subtitle-text {
-      font-size: ${isVertical ? '42px' : '34px'};
+      font-size: ${subtitleSize}px;
       color: #fbbf24;
       margin-bottom: 28px;
       text-shadow: 0 2px 20px rgba(251,191,36,0.5);
     }
     .body-text {
-      font-size: ${isVertical ? '34px' : '26px'};
+      font-size: ${bodySize}px;
       line-height: 1.4;
       ${isVertical ? 'max-width: 92%; margin: 0 auto;' : 'max-width: 90%;'}
     }
@@ -929,13 +973,13 @@ export class SocialHtmlRendererService {
       padding: ${isVertical ? '40px 0 0' : '30px 0 0'};
     }
     .invitation-text {
-      font-size: ${isVertical ? '30px' : '24px'};
+      font-size: ${inviteSize}px;
       font-weight: 600;
       margin-bottom: 22px;
       line-height: 1.35;
     }
     .meta-row {
-      font-size: ${isVertical ? '22px' : '20px'};
+      font-size: ${metaSize}px;
       display: flex;
       ${isVertical ? 'flex-direction: column; gap: 10px;' : 'flex-wrap: wrap; gap: 10px 28px;'}
       color: rgba(255,255,255,0.8);
@@ -945,13 +989,13 @@ export class SocialHtmlRendererService {
     <div class="container">
       <div class="brand-row">${logoHtml}<span class="brand-name">${this.escapeHtml(churchName)}</span></div>
       <div class="content-area">
-        <h1 class="title-text">${this.escapeHtml(title)}</h1>
-        ${subtitle ? `<div class="subtitle-text">${this.escapeHtml(subtitle)}</div>` : ''}
-        ${body ? `<p class="body-text">${this.escapeHtml(body)}</p>` : ''}
+        <h1 class="title-text">${this.renderLines(title, isVertical ? 2 : 2, isVertical ? 16 : 20)}</h1>
+        ${subtitle ? `<div class="subtitle-text">${this.renderLines(subtitle, 2, isVertical ? 18 : 22)}</div>` : ''}
+        ${body ? `<p class="body-text">${this.renderLines(body, 3, isVertical ? 20 : 24)}</p>` : ''}
       </div>
       <div class="bottom-section">
-        ${invitation ? `<div class="invitation-text">${this.escapeHtml(invitation)}</div>` : ''}
-        <div class="meta-row">${metaLines.slice(0, 4).map(l => `<span>${this.escapeHtml(l)}</span>`).join('')}</div>
+        ${invitation ? `<div class="invitation-text">${this.renderLines(invitation, 2, isVertical ? 20 : 22)}</div>` : ''}
+        <div class="meta-row">${metaLines.slice(0, 4).map(l => `<span>${this.renderInline(l, 24)}</span>`).join('')}</div>
       </div>
     </div>
     </body></html>`;

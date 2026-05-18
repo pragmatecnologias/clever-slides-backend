@@ -1,4 +1,5 @@
-import { IsOptional, IsString, IsArray } from 'class-validator';
+import { IsOptional, IsString, IsArray, IsEnum } from 'class-validator';
+import { DeckIntent } from './create-deck.dto';
 
 export class RegenerateDeckDto {
   @IsOptional()
@@ -8,4 +9,8 @@ export class RegenerateDeckDto {
   @IsOptional()
   @IsArray()
   templatePlan?: string[];
+
+  @IsOptional()
+  @IsEnum(DeckIntent)
+  deckIntent?: DeckIntent;
 }

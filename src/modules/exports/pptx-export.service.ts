@@ -7,6 +7,7 @@ import { Deck } from '../../entities/deck.entity';
 import { SlideType } from '../../entities/slide-types';
 import * as path from 'path';
 import * as fs from 'fs';
+import { cleanText, estimateFontSize } from '../llm/slide-content-formatting';
 
 @Injectable()
 export class PptxExportService {
@@ -25,7 +26,60 @@ export class PptxExportService {
   }
 
   private getStyle(content: any, field: string, fallback: Record<string, any> = {}) {
-    return content?.__styles?.[field] || fallback;
+    const style = { ...fallback, ...(content?.__styles?.[field] || {}) };
+    const text = this.resolveFieldText(content, field);
+    if (!style.fontSize && text) {
+      style.fontSize = this.getAdaptiveFontSize(field, text, fallback.fontSize || 28);
+    }
+    return style;
+  }
+
+  private resolveFieldText(content: any, field: string): string {
+    if (!content) return '';
+    switch (field) {
+      case 'title':
+        return cleanText(content.title || content.reference || '');
+      case 'subtitle':
+        return cleanText(content.subtitle || '');
+      case 'reference':
+        return cleanText(content.reference || '');
+      case 'lines':
+        return cleanText(Array.isArray(content.lines) ? content.lines.join(' ') : content.lines || '');
+      case 'bullets':
+        return cleanText(Array.isArray(content.bullets) ? content.bullets.join(' ') : content.bullets || '');
+      case 'message':
+        return cleanText(content.message || '');
+      case 'caption':
+        return cleanText(content.caption || '');
+      case 'body':
+        return cleanText(content.body || '');
+      default:
+        return cleanText(content[field] || '');
+    }
+  }
+
+  private getAdaptiveFontSize(field: string, text: string, base: number) {
+    const normalized = cleanText(text);
+    if (!normalized) return base;
+    switch (field) {
+      case 'title':
+        return estimateFontSize(normalized, base, 28, 22, 2);
+      case 'subtitle':
+        return estimateFontSize(normalized, base, 18, 26, 2);
+      case 'reference':
+        return estimateFontSize(normalized, base, 18, 24, 1);
+      case 'lines':
+        return estimateFontSize(normalized, base, 22, 34, 3);
+      case 'bullets':
+        return estimateFontSize(normalized, base, 20, 30, 4);
+      case 'message':
+        return estimateFontSize(normalized, base, 18, 26, 3);
+      case 'caption':
+      case 'body':
+        return estimateFontSize(normalized, base, 16, 28, 3);
+      default:
+        return base;
+    }
   }
 
   async generatePptx(deck: Deck): Promise<string> {
@@ -104,6 +158,8 @@ export class PptxExportService {
       color: this.normalizeColor(titleStyle.color, this.normalizeColor(color)),
       align: titleStyle.align || 'center',
       fontFace: titleStyle.fontFamily,
+      margin: 0.05,
+      fit: 'shrink',
     });
 
     if (content.subtitle) {
@@ -124,6 +180,8 @@ export class PptxExportService {
         color: this.normalizeColor(subtitleStyle.color, '666666'),
         align: subtitleStyle.align || 'center',
         fontFace: subtitleStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
       });
     }
   }
@@ -150,6 +208,8 @@ export class PptxExportService {
       color: this.normalizeColor(referenceStyle.color, this.normalizeColor(color)),
       align: referenceStyle.align || 'center',
       fontFace: referenceStyle.fontFamily,
+      margin: 0.02,
+      fit: 'shrink',
     });
 
     const lines = content.lines || [];
@@ -174,6 +234,8 @@ export class PptxExportService {
         color: this.normalizeColor(lineStyle.color, '333333'),
         align: lineStyle.align || 'center',
         fontFace: lineStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
       });
     });
   }
@@ -200,6 +262,8 @@ export class PptxExportService {
       color: this.normalizeColor(titleStyle.color, this.normalizeColor(primaryColor)),
       align: titleStyle.align || 'left',
       fontFace: titleStyle.fontFamily,
+      margin: 0.04,
+      fit: 'shrink',
     });
 
     const bullets = content.bullets || [];
@@ -225,6 +289,8 @@ export class PptxExportService {
         color: this.normalizeColor(bulletStyle.color, '333333'),
         align: bulletStyle.align || 'left',
         fontFace: bulletStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
       });
     });
   }
@@ -251,6 +317,8 @@ export class PptxExportService {
       color: this.normalizeColor(titleStyle.color, this.normalizeColor(color)),
       align: titleStyle.align || 'center',
       fontFace: titleStyle.fontFamily,
+      margin: 0.05,
+      fit: 'shrink',
     });
 
     const bullets = content.bullets || [];
@@ -276,6 +344,8 @@ export class PptxExportService {
         color: this.normalizeColor(bulletStyle.color, '333333'),
         align: bulletStyle.align || 'left',
         fontFace: bulletStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
       });
     });
   }
@@ -302,6 +372,8 @@ export class PptxExportService {
       color: this.normalizeColor(titleStyle.color, 'FFFFFF'),
       align: titleStyle.align || 'center',
       fontFace: titleStyle.fontFamily,
+      margin: 0.05,
+      fit: 'shrink',
     });
 
     if (content.message) {
@@ -322,6 +394,8 @@ export class PptxExportService {
         color: this.normalizeColor(messageStyle.color, 'FFFFFF'),
         align: messageStyle.align || 'center',
         fontFace: messageStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
       });
     }
   }
@@ -337,6 +411,8 @@ export class PptxExportService {
       h: 5,
       fontSize: 18,
       color: '333333',
+      margin: 0.02,
+      fit: 'shrink',
     });
   }
 }

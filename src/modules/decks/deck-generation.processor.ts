@@ -38,6 +38,7 @@ export class DeckGenerationProcessor {
     const {
       deckId,
       deckSize,
+      deckIntent = 'sermon_presentation',
       templatePlan,
       templatePackId,
       backgroundProvider = 'local',
@@ -73,6 +74,7 @@ export class DeckGenerationProcessor {
         deck.theme,
         deckSize,
         allTemplates,
+        deckIntent,
         (progress, message) => {
           this.logger.log(`Deck ${deckId} progress: ${progress}% - ${message}`);
           job.progress(progress);

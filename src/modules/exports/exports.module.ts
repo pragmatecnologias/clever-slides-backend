@@ -7,13 +7,14 @@ import { BrandTheme } from '../../entities/brand-theme.entity';
 import { ExportsController } from './exports.controller';
 import { ExportsService } from './exports.service';
 import { PptxExportService } from './pptx-export.service';
+import { PdfExportService } from './pdf-export.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Export, Deck, Slide, BrandTheme]),
   ],
   controllers: [ExportsController],
-  providers: [ExportsService, PptxExportService],
+  providers: [ExportsService, PptxExportService, PdfExportService],
   exports: [ExportsService],
 })
 export class ExportsModule {}

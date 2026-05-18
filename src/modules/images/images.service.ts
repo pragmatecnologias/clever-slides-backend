@@ -102,7 +102,16 @@ export class ImagesService {
     if (sermon?.mainScriptureRef) segments.push(`Scripture: ${sermon.mainScriptureRef}`);
 
     const base = segments.length ? segments.join('. ') : 'Sermon slide background.';
-    return `Create a cinematic church-themed background. ${base}. No text on the image.`;
+    return this.enrichPrompt(
+      `Create a cinematic church-themed background. ${base}.`,
+      slide.deck?.sermon?.mainScriptureRef || '',
+      {
+        useCase: 'background',
+        passage: slide.deck?.sermon?.mainScriptureRef || '',
+        title: slide.deck?.sermon?.title || '',
+        bigIdea: slide.deck?.sermon?.bigIdea || '',
+      },
+    );
   }
 
   private buildContentImagePrompt(slide: Slide): string {
@@ -117,7 +126,41 @@ export class ImagesService {
     if (sermon?.bigIdea) segments.push(`Big idea: ${sermon.bigIdea}`);
 
     const base = segments.length ? segments.join('. ') : 'Sermon slide image.';
-    return `Create a cinematic photo-style image. ${base}. No text in the image.`;
+    return this.enrichPrompt(
+      `Create a cinematic photo-style image. ${base}.`,
+      slide.deck?.sermon?.mainScriptureRef || '',
+      {
+        useCase: 'content',
+        passage: slide.deck?.sermon?.mainScriptureRef || '',
+        title: slide.deck?.sermon?.title || '',
+        bigIdea: slide.deck?.sermon?.bigIdea || '',
+      },
+    );
+  }
+
+  private enrichPrompt(
+    prompt: string,
+    passage: string,
+    context: { useCase: 'background' | 'content'; title?: string; bigIdea?: string; passage?: string },
+  ): string {
+    const source = String(prompt || '').trim().replace(/\s+/g, ' ');
+    const sermonText = [context.title, context.bigIdea, context.passage || passage].filter(Boolean).join(' · ');
+    const isProphetic = /(revelation\s*(12|13|14|18)|daniel\s*(7|8)|matthew\s*24|exodus\s*20)/i.test(sermonText);
+    const isChristCentered = /(john\s*3:16|love|salvation|grace|cross|resurrection|gospel|christ)/i.test(sermonText);
+    const styleHints = [
+      context.useCase === 'background'
+        ? 'use a calm, elegant composition with clear negative space for text'
+        : 'use a clear subject with sermon-friendly composition and soft depth of field',
+      'church-appropriate, respectful, polished, high contrast, no embedded text',
+      isProphetic
+        ? 'avoid sensational beasts, flames, doom imagery, and fear-based apocalypse visuals; prefer hope, light, worship, and faithful witness'
+        : 'prefer warm reverent worship imagery with hope and clarity',
+      isChristCentered
+        ? 'keep the mood centered on Christ, grace, and invitation'
+        : 'keep the mood spiritually reflective and accessible',
+      'do not add captions, logos, watermarks, or typography',
+    ];
+    return `${source} ${styleHints.join('. ')}.`;
   }
 
   async getImagePath(slideId: string, churchId: string) {
