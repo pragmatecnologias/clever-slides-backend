@@ -171,12 +171,16 @@ export class SermonsService {
       dto.outline && typeof dto.outline === 'object'
         ? { ...dto.outline, _workspaceLanguage: normalizedLanguage || dto.outline?._workspaceLanguage || 'en' }
         : dto.outline;
+    const planning = dto.planning && typeof dto.planning === 'object' ? dto.planning : null;
+    const sermonDate = planning?.sermonDate ? new Date(String(planning.sermonDate)) : null;
+    const normalizedDate = sermonDate && !Number.isNaN(sermonDate.getTime()) ? sermonDate : null;
 
     if (existing) {
       // Update existing sermon
       Object.assign(existing, {
         title: dto.title,
         seriesTitle: dto.seriesTitle,
+        date: normalizedDate || existing.date,
         mainScriptureRef: scriptureRef,
         bigIdea: dto.bigIdea,
         mainPoints: dto.mainPoints,
@@ -187,6 +191,7 @@ export class SermonsService {
         manuscript: dto.manuscript,
         applications: dto.applications,
         questions: dto.questions,
+        planning,
       });
       await this.sermonRepository.save(existing);
       return existing;
@@ -198,6 +203,7 @@ export class SermonsService {
       source: 'sermon_app',
       title: dto.title,
       seriesTitle: dto.seriesTitle,
+      date: normalizedDate || undefined,
       mainScriptureRef: scriptureRef,
       bigIdea: dto.bigIdea,
       mainPoints: dto.mainPoints,
@@ -208,6 +214,7 @@ export class SermonsService {
       manuscript: dto.manuscript,
       applications: dto.applications,
       questions: dto.questions,
+      planning,
       createdByUserId: userId,
       churchId,
     });

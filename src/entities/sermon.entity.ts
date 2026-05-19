@@ -86,6 +86,9 @@ export class Sermon {
   @Column({ nullable: true })
   workspaceId: string;
 
+  @Column({ type: 'jsonb', nullable: true })
+  planning: Record<string, any>;
+
   @Column({ default: 'slides_app' })
   source: string;
 

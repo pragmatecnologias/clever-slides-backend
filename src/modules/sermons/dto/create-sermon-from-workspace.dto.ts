@@ -1,4 +1,4 @@
-import { IsString, IsArray, IsOptional } from 'class-validator';
+import { IsString, IsArray, IsOptional, IsObject } from 'class-validator';
 
 export class CreateSermonFromWorkspaceDto {
   @IsString()
@@ -52,4 +52,8 @@ export class CreateSermonFromWorkspaceDto {
 
   @IsOptional()
   questions?: any[];
+
+  @IsOptional()
+  @IsObject()
+  planning?: Record<string, any>;
 }

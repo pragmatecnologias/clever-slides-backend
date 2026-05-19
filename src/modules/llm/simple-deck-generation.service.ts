@@ -97,18 +97,19 @@ export class SimpleDeckGenerationService {
     sermon: Sermon,
     resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
+    const planning = this.getPlanningProfile(sermon);
     return {
       type: SlideType.TITLE,
       layoutKey: 'title_centered_v1',
       templateId: resolveTemplateId('title_centered_v1', SlideType.TITLE),
       content: {
         title: sermon.title || 'Untitled Sermon',
-        subtitle: sermon.seriesTitle || sermon.bigIdea,
+        subtitle: sermon.seriesTitle || planning.theme || sermon.bigIdea,
       },
       speakerNotes: this.t(
         sermon,
-        `Welcome and introduction. ${sermon.bigIdea}`,
-        `Bienvenida e introducción. ${sermon.bigIdea}`,
+        `Welcome and introduction. ${this.buildPlanningCue(sermon)} ${sermon.bigIdea}`,
+        `Bienvenida e introducción. ${this.buildPlanningCue(sermon)} ${sermon.bigIdea}`,
       ),
       imagePrompt: `Cinematic church background for sermon titled "${sermon.title}"`,
     };
@@ -142,6 +143,7 @@ export class SimpleDeckGenerationService {
     sermon: Sermon,
     resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
+    const planning = this.getPlanningProfile(sermon);
     const bigIdea = this.limitText(this.asString(sermon.bigIdea || sermon.title), 120);
     return {
       type: SlideType.TRANSITION,
@@ -153,8 +155,8 @@ export class SimpleDeckGenerationService {
       },
       speakerNotes: this.t(
         sermon,
-        `State the sermon center clearly: ${bigIdea}`,
-        `Enuncia el centro del sermón con claridad: ${bigIdea}`,
+        `State the sermon center clearly: ${bigIdea}. ${this.buildPlanningCue(sermon, planning)}`,
+        `Enuncia el centro del sermón con claridad: ${bigIdea}. ${this.buildPlanningCue(sermon, planning)}`,
       ),
       imagePrompt: `Hopeful church background for sermon big idea: ${bigIdea}`,
     };
@@ -187,6 +189,7 @@ export class SimpleDeckGenerationService {
     closingText: string,
     resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
+    const planning = this.getPlanningProfile(sermon);
     return {
       type: SlideType.TRANSITION,
       layoutKey: 'section_header_v1',
@@ -197,8 +200,8 @@ export class SimpleDeckGenerationService {
       },
       speakerNotes: this.t(
         sermon,
-        `End with a pastoral summary: ${closingText}`,
-        `Cierra con un resumen pastoral: ${closingText}`,
+        `End with a pastoral summary: ${closingText}. ${this.buildPlanningCue(sermon, planning)}`,
+        `Cierra con un resumen pastoral: ${closingText}. ${this.buildPlanningCue(sermon, planning)}`,
       ),
       imagePrompt: 'Warm closing church background',
     };
@@ -641,50 +644,23 @@ export class SimpleDeckGenerationService {
     resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
     const isEs = this.isSpanishWorkspace(sermon);
-    const ctaTitles = isEs
-      ? {
-          salvation: 'Acepta a Cristo hoy',
-          prayer: 'Oremos juntos',
-          discipleship: 'Da el siguiente paso',
-          invitation: 'Responde al llamado de Dios',
-          none: '',
-        }
-      : {
-          salvation: 'Accept Jesus Christ as your Lord and Savior',
-          prayer: 'Let us pray together',
-          discipleship: 'Take the next step in your faith journey',
-          invitation: "Respond to God's call today",
-          none: '',
-        };
-
-    const ctaMessageBody = isEs
-      ? {
-          salvation: 'Hoy es el momento para entregar tu vida a Cristo.',
-          prayer: 'Presentemos nuestras cargas y decisiones delante de Dios.',
-          discipleship: 'Comprométete a obedecer a Jesús en esta semana.',
-          invitation: 'Responde con fe a lo que Dios te ha hablado hoy.',
-          none: '',
-        }
-      : {
-          salvation: 'Today is the day to surrender your life to Christ.',
-          prayer: 'Bring your burdens and decisions before God in prayer.',
-          discipleship: 'Commit to follow Jesus with concrete obedience this week.',
-          invitation: 'Respond in faith to what God has spoken today.',
-          none: '',
-        };
+    const planning = this.getPlanningProfile(sermon);
+    const appealStyle = this.getPlanningValue(sermon, 'appealStyle') || sermon.ctaStyle || 'invitation';
+    const titles = this.buildAppealTitles(isEs);
+    const messages = this.buildAppealMessages(isEs);
 
     return {
       type: SlideType.INVITATION,
       layoutKey: 'invitation_centered_v1',
       templateId: resolveTemplateId('invitation_centered_v1', SlideType.INVITATION),
       content: {
-        title: ctaTitles[sermon.ctaStyle] || this.t(sermon, "Respond to God's Call", 'Responde al llamado de Dios'),
-        message: ctaMessageBody[sermon.ctaStyle] || this.t(sermon, 'Respond to what God is saying.', 'Responde a lo que Dios está diciendo.'),
+        title: titles[appealStyle] || titles.invitation,
+        message: messages[appealStyle] || messages.invitation,
       },
       speakerNotes: this.t(
         sermon,
-        `Call to action: ${sermon.ctaStyle}. Invite people to respond.`,
-        `Llamado final: ${sermon.ctaStyle}. Invita a la iglesia a responder.`,
+        `Call to action: ${appealStyle}. Invite people to respond. ${this.buildPlanningCue(sermon, planning)}`,
+        `Llamado final: ${appealStyle}. Invita a la iglesia a responder. ${this.buildPlanningCue(sermon, planning)}`,
       ),
       imagePrompt: 'Invitation to respond, people raising hands in worship',
     };
@@ -1067,18 +1043,155 @@ export class SimpleDeckGenerationService {
     return title;
   }
 
+  private getPlanningProfile(sermon: Sermon): Record<string, any> {
+    return (sermon as Record<string, any>)?.planning && typeof (sermon as Record<string, any>).planning === 'object'
+      ? ((sermon as Record<string, any>).planning as Record<string, any>)
+      : {};
+  }
+
+  private getPlanningValue(sermon: Sermon, key: string): string {
+    const planning = this.getPlanningProfile(sermon);
+    return this.asString(planning?.[key]);
+  }
+
+  private buildPlanningCue(sermon: Sermon, planning = this.getPlanningProfile(sermon)): string {
+    const parts = [
+      planning.serviceType ? `Service: ${this.formatPlanningValue('serviceType', planning.serviceType)}` : '',
+      planning.ministryMode ? `Mode: ${this.formatPlanningValue('ministryMode', planning.ministryMode)}` : '',
+      planning.appealStyle ? `Appeal: ${this.formatPlanningValue('appealStyle', planning.appealStyle)}` : '',
+      planning.targetLengthMinutes ? `Target length: ${planning.targetLengthMinutes} minutes` : '',
+      planning.bilingualMode ? `Bilingual: ${this.formatPlanningValue('bilingualMode', planning.bilingualMode)}` : '',
+      planning.sermonDate ? `Date: ${planning.sermonDate}` : '',
+    ].filter(Boolean);
+    return parts.length ? parts.join(' • ') : '';
+  }
+
+  private formatPlanningValue(field: string, value: string): string {
+    const normalized = this.asString(value);
+    const mappings: Record<string, Record<string, string>> = {
+      serviceType: {
+        sabbath_worship: 'Sabbath Worship',
+        sabbath_school: 'Sabbath School',
+        evangelistic_meeting: 'Evangelistic Meeting',
+        bible_study: 'Bible Study / Teaching',
+        devotional: 'Devotional',
+        youth: 'Youth / Young Adults',
+        prayer_meeting: 'Prayer Meeting',
+        funeral_memorial: 'Funeral / Memorial',
+        wedding_family: 'Wedding / Family',
+      },
+      ministryMode: {
+        evangelistic: 'Evangelistic',
+        teaching: 'Teaching',
+        doctrinal: 'Doctrinal',
+        pastoral: 'Pastoral',
+        prophetic: 'Prophetic / Adventist',
+        discipleship: 'Discipleship',
+        family_youth: 'Family / Youth',
+      },
+      appealStyle: {
+        invitation: 'Invitation',
+        commitment: 'Commitment',
+        reflection: 'Reflection',
+        doctrinal_clarity: 'Doctrinal Clarity',
+        pastoral_encouragement: 'Pastoral Encouragement',
+        repentance_return: 'Repentance / Return',
+        mission_service: 'Mission / Service',
+      },
+      bilingualMode: {
+        none: 'No bilingual support',
+        bilingual_key_phrases: 'Bilingual key phrases',
+        bilingual_outline: 'Bilingual outline',
+        spanish_support_notes: 'Spanish support notes',
+        english_support_notes: 'English support notes',
+      },
+    };
+    return mappings[field]?.[normalized] || normalized;
+  }
+
+  private buildAppealTitles(isSpanish: boolean): Record<string, string> {
+    return isSpanish
+      ? {
+          salvation: 'Acepta a Cristo hoy',
+          prayer: 'Oremos juntos',
+          discipleship: 'Da el siguiente paso',
+          invitation: 'Responde al llamado de Dios',
+          commitment: 'Comprométete con Jesús',
+          reflection: 'Reflexiona en oración',
+          doctrinal_clarity: 'Aférrate a la verdad',
+          pastoral_encouragement: 'Recibe ánimo y esperanza',
+          repentance_return: 'Vuelve al Padre',
+          mission_service: 'Sirve con misión',
+          none: '',
+        }
+      : {
+          salvation: 'Accept Jesus Christ as your Lord and Savior',
+          prayer: 'Let us pray together',
+          discipleship: 'Take the next step in your faith journey',
+          invitation: "Respond to God's call today",
+          commitment: 'Commit your life to Christ',
+          reflection: 'Pause and reflect in prayer',
+          doctrinal_clarity: 'Stand on the truth',
+          pastoral_encouragement: 'Receive hope and encouragement',
+          repentance_return: 'Return to the Father',
+          mission_service: 'Go and serve',
+          none: '',
+        };
+  }
+
+  private buildAppealMessages(isSpanish: boolean): Record<string, string> {
+    return isSpanish
+      ? {
+          salvation: 'Hoy es el momento para entregar tu vida a Cristo.',
+          prayer: 'Presentemos nuestras cargas y decisiones delante de Dios.',
+          discipleship: 'Comprométete a obedecer a Jesús en esta semana.',
+          invitation: 'Responde con fe a lo que Dios te ha hablado hoy.',
+          commitment: 'Haz una decisión concreta de seguir a Jesús.',
+          reflection: 'Escucha al Espíritu y responde con honestidad.',
+          doctrinal_clarity: 'Aférrate a la Palabra y camina en verdad.',
+          pastoral_encouragement: 'Dios te llama con gracia y esperanza.',
+          repentance_return: 'Vuelve al Padre con un corazón rendido.',
+          mission_service: 'Recibe el llamado para servir con amor.',
+          none: '',
+        }
+      : {
+          salvation: 'Today is the day to surrender your life to Christ.',
+          prayer: 'Bring your burdens and decisions before God in prayer.',
+          discipleship: 'Commit to follow Jesus with concrete obedience this week.',
+          invitation: 'Respond in faith to what God has spoken today.',
+          commitment: 'Make a concrete decision to follow Jesus.',
+          reflection: 'Listen prayerfully and respond with honesty.',
+          doctrinal_clarity: 'Stand on the Word and walk in truth.',
+          pastoral_encouragement: 'God calls you with grace and hope.',
+          repentance_return: 'Return to the Father with a surrendered heart.',
+          mission_service: 'Receive the call to serve with love.',
+          none: '',
+        };
+  }
+
   private buildClosingLine(sermon: Sermon, intent: DeckIntentMode): string {
-    const source = `${this.asString(sermon.mainScriptureRef)} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)}`.toLowerCase();
+    const planning = this.getPlanningProfile(sermon);
+    const appealStyle = this.getPlanningValue(sermon, 'appealStyle') || sermon.ctaStyle || 'invitation';
+    const source = `${this.asString(sermon.mainScriptureRef)} ${this.asString(sermon.title)} ${this.asString(sermon.bigIdea)} ${appealStyle}`.toLowerCase();
     if (/john\s*3:16|juan\s*3:16/.test(source)) {
-      return 'God’s love still gives eternal life.';
+      return appealStyle === 'repentance_return'
+        ? 'Come home to the Father who gave His Son.'
+        : 'God’s love still gives eternal life.';
     }
     if (/revelation\s*14:6-12|apocalipsis\s*14:6-12|three angels|tres a[nñ]geles|everlasting gospel|evangelio eterno/.test(source)) {
-      return 'The Lamb leads His people faithfully.';
+      return appealStyle === 'mission_service'
+        ? 'Serve faithfully as the Lamb leads His people.'
+        : 'The Lamb leads His people faithfully.';
+    }
+    if (appealStyle === 'commitment') {
+      return 'Leave with a clear commitment to follow Jesus.';
     }
     if (intent === 'social_summary') {
       return 'Share the message and invite someone in.';
     }
-    return 'Close with hope, prayer, and trust in God’s word.';
+    return planning.targetLengthMinutes && planning.targetLengthMinutes >= 35
+      ? 'Close with hope, prayer, and a fuller pastoral landing.'
+      : 'Close with hope, prayer, and a clear landing.';
   }
 
   private normalizeDeckIntent(value: string): DeckIntentMode {
