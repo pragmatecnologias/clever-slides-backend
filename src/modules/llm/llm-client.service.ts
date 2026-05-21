@@ -32,12 +32,16 @@ export class LlmClient {
 
     try {
       if (provider === 'minimax') {
-        return this.callMiniMax(system, user, schemaHint, options);
+        return await this.callMiniMax(system, user, schemaHint, options);
       } else {
-        return this.callLocalLlm(system, user, schemaHint, options);
+        return await this.callLocalLlm(system, user, schemaHint, options);
       }
     } catch (error) {
-      this.logger.error(`LLM generation error: ${error.message}`);
+      if (this.isRecoverableProviderError(error)) {
+        this.logger.warn('LLM provider fallback used: provider unavailable or model unsupported');
+      } else {
+        this.logger.error(`LLM generation error: ${this.getErrorMessage(error)}`);
+      }
       if (schemaHint) {
         this.logger.log('Returning schema hint as fallback');
         return schemaHint as T;
@@ -202,5 +206,40 @@ export class LlmClient {
 
     // Try parsing the whole content as JSON
     return JSON.parse(content);
+  }
+
+  private isRecoverableProviderError(error: unknown): boolean {
+    const message = this.getErrorMessage(error).toLowerCase();
+    const responseText = this.getAxiosResponseText(error).toLowerCase();
+    return [
+      'miniMax api error',
+      'not support model',
+      'unsupported model',
+      'code 2061',
+      'no response from minimax',
+      'llm provider unavailable',
+    ].some((needle) => message.includes(needle.toLowerCase()) || responseText.includes(needle.toLowerCase()));
+  }
+
+  private getAxiosResponseText(error: unknown): string {
+    if (!axios.isAxiosError(error)) return '';
+    const data = error.response?.data;
+    if (!data) return '';
+    if (typeof data === 'string') return data;
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return '';
+    }
+  }
+
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string') return error;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return 'unknown error';
+    }
   }
 }

@@ -44,7 +44,9 @@ Requirements:
 ${hasExistingPoints ? '- Enhance or refine the existing points if they are vague or too long' : '- If sermon notes are minimal, derive points from the big idea and scripture'}`;
 
     try {
-      const result = await this.llmClient.generateJson<SermonAnalysis>(system, user);
+      const result = await this.llmClient.generateJson<SermonAnalysis>(system, user, {
+        mainPoints: this.getFallbackPoints(bigIdea, existingPoints).mainPoints,
+      });
       this.logger.log(`Analyzed sermon "${title}" - extracted ${result.mainPoints?.length || 0} main points`);
       
       // Ensure we have at least 3 points
@@ -57,7 +59,7 @@ ${hasExistingPoints ? '- Enhance or refine the existing points if they are vague
         mainPoints: result.mainPoints.slice(0, 5), // Max 5 points
       };
     } catch (error) {
-      this.logger.error(`Sermon analysis failed: ${error.message}`);
+      this.logger.warn('Sermon analysis fell back to local point extraction');
       return this.getFallbackPoints(bigIdea, existingPoints);
     }
   }

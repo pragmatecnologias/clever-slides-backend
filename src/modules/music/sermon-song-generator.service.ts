@@ -108,6 +108,13 @@ Return JSON:
       const extracted = await this.llmClient.generateJson<any>(
         'You are a worship songwriter analyzing sermon content to extract singable theological phrases.',
         keyPhrasesPrompt,
+        {
+          keyPhrases: [],
+          imagery: [],
+          theologicalClaims: [],
+          emotionalBurden: '',
+          coreApplication: '',
+        },
       );
 
       return {
@@ -125,7 +132,7 @@ Return JSON:
         doctrinalLens: sermon.doctrinalLens,
       };
     } catch (error) {
-      this.logger.error(`Failed to extract sermon elements: ${error.message}`);
+      this.logger.warn('Failed to extract sermon elements, using fallback data');
       // Fallback to basic extraction
       return {
         title: sermon.title,
@@ -291,18 +298,23 @@ Return JSON format:
 
     try {
       const generationOptions = this.getLyricsGenerationOptions(style);
+      const fallback = this.buildFallbackLyrics(elements, style, mode, useCase, studyPrompt);
       const lyrics = await this.llmClient.generateJson<SongLyrics>(
         systemPrompt,
         userPrompt,
-        undefined,
+        fallback,
         generationOptions,
       );
 
       this.logger.log(`Generated lyrics for "${lyrics.title}"`);
       return lyrics;
     } catch (error) {
-      this.logger.error(`Failed to generate lyrics: ${error.message}`);
-      throw error;
+      this.logger.warn('Failed to generate lyrics, using fallback lyrics');
+      const fallback = this.buildFallbackLyrics(elements, style, mode, useCase, studyPrompt);
+      this.logger.warn(
+        `Using fallback sermon-song lyrics for "${fallback.title}" after generation failure`,
+      );
+      return fallback;
     }
   }
 
@@ -338,6 +350,13 @@ Return JSON format:
       instrumental_ambient: { mood: 'calm and atmospheric', tempo: '55-72 BPM', instruments: ['ambient pads', 'soft piano', 'textural strings'] },
     };
     const styleProfile = styleProfiles[style] || styleProfiles.instrumental_ambient;
+    const toneToMood: Record<string, string> = {
+      encouraging: 'uplifting and hopeful',
+      reflective: 'contemplative and peaceful',
+      prophetic: 'mysterious and reverent',
+      celebratory: 'joyful and triumphant',
+      repentant: 'somber and introspective',
+    };
 
     const systemPrompt = `You are a music producer creating ambient worship music prompts for sermon contexts.
 Your prompts must capture the sermon's theological mood and emotional atmosphere.`;
@@ -380,35 +399,32 @@ Return JSON:
 `;
 
     try {
+      const fallback = {
+        description: `Instrumental ${style} worship music for ${elements.title}`,
+        mood: `${toneToMood[elements.tone] || 'peaceful worship'}, ${styleProfile.mood}`,
+        instruments: styleProfile.instruments,
+        duration,
+        useCase,
+        sunoPrompt: `Instrumental ${style} worship music, mood ${toneToMood[elements.tone] || 'peaceful worship'}, ${styleProfile.mood}, tempo ${styleProfile.tempo}, instruments ${styleProfile.instruments.join(', ')}, suitable for ${useCaseDesc}, ${duration} seconds, no vocals`,
+      };
+
       const prompt = await this.llmClient.generateJson<AmbientPrompt>(
         systemPrompt,
         userPrompt,
+        fallback,
       );
 
       this.logger.log(`Generated ambient prompt for ${useCase} in style ${style}`);
       return prompt;
     } catch (error) {
-      this.logger.error(`Failed to generate ambient prompt: ${error.message}`);
-      
-      // Fallback to simple prompt
-      const toneToMood = {
-        encouraging: 'uplifting and hopeful',
-        reflective: 'contemplative and peaceful',
-        prophetic: 'mysterious and reverent',
-        celebratory: 'joyful and triumphant',
-        repentant: 'somber and introspective',
-      };
-
-      const mood = toneToMood[elements.tone] || 'peaceful worship';
-      const fallbackInstruments = styleProfile.instruments;
-
+      this.logger.warn('Failed to generate ambient prompt, using fallback prompt');
       return {
         description: `Instrumental ${style} worship music for ${elements.title}`,
-        mood: `${mood}, ${styleProfile.mood}`,
-        instruments: fallbackInstruments,
+        mood: `${toneToMood[elements.tone] || 'peaceful worship'}, ${styleProfile.mood}`,
+        instruments: styleProfile.instruments,
         duration,
         useCase,
-        sunoPrompt: `Instrumental ${style} worship music, mood ${mood}, ${styleProfile.mood}, tempo ${styleProfile.tempo}, instruments ${fallbackInstruments.join(', ')}, suitable for ${useCaseDesc}, ${duration} seconds, no vocals`,
+        sunoPrompt: `Instrumental ${style} worship music, mood ${toneToMood[elements.tone] || 'peaceful worship'}, ${styleProfile.mood}, tempo ${styleProfile.tempo}, instruments ${styleProfile.instruments.join(', ')}, suitable for ${useCaseDesc}, ${duration} seconds, no vocals`,
       };
     }
   }
@@ -455,5 +471,230 @@ Return JSON:
       bridge: [],
       outro: [],
     };
+  }
+
+  private buildFallbackLyrics(
+    elements: SermonElements,
+    style: string,
+    mode: string,
+    useCase: string,
+    studyPrompt?: string,
+  ): SongLyrics {
+    const isSpanish = String(elements.language || 'en').toLowerCase().startsWith('es');
+    const themeText = this.compactText(elements.theme || elements.bigIdea || elements.title || elements.passage);
+    const passageText = this.compactText(elements.passage || '');
+    const hook = this.buildFallbackHook(elements, isSpanish);
+    const title = this.buildFallbackTitle(elements, isSpanish);
+    const keyPhrases = this.normalizeKeyPhrases(elements.keyPhrases, themeText, passageText, isSpanish);
+    const themeStatement = isSpanish
+      ? `Un canto ${style} basado en ${passageText || 'la Escritura'}, centrado en ${themeText || 'la gracia de Dios'}.`
+      : `A ${style} song rooted in ${passageText || 'Scripture'}, centered on ${themeText || 'God\'s grace'}.`;
+
+    const verse1 = isSpanish
+      ? [
+          'Estábamos lejos de Ti',
+          'Pero Tu voz llegó hasta aquí',
+          'La gracia nos volvió a ver',
+          'Padre, aquí queremos volver',
+        ]
+      : [
+          'We were far, but You drew near',
+          'Grace was whispering, do not fear',
+          'Wandering hearts can hear Your name',
+          'Father, welcome us again',
+        ];
+
+    const chorus = isSpanish
+      ? [
+          hook,
+          hook,
+          'Jesús nos llama otra vez',
+        ]
+      : [
+          hook,
+          hook,
+          'Jesus keeps calling us home',
+        ];
+
+    const verse2 = isSpanish
+      ? [
+          'Tu verdad abrió el lugar',
+          'Tu misericordia no cesará',
+          'Restauras nuestra dignidad',
+          'En tus brazos hay libertad',
+        ]
+      : [
+          'Truth has opened up the door',
+          'Mercy meets us evermore',
+          'Dignity is found in You',
+          'Every broken heart made new',
+        ];
+
+    const bridge = isSpanish
+      ? [
+          'Tú sanas el corazón',
+          'Haces todo nuevo, Señor',
+          'Hoy corrremos a Tu voz',
+          'Y hallaremos vida en Dios',
+        ]
+      : [
+          'You restore what we have lost',
+          'Love has paid the highest cost',
+          'We come home and stand amazed',
+          'Jesus, You alone are praised',
+        ];
+
+    const outro = isSpanish
+      ? ['Volvemos a casa en Tu amor']
+      : ['We are coming home to You'];
+
+    const scriptureAnchors = this.buildFallbackScriptureAnchors(elements, isSpanish);
+    const lyrics: SongLyrics = {
+      title,
+      themeStatement,
+      verse1,
+      chorus,
+      verse2,
+      bridge,
+      outro,
+      keyPhrases,
+      scriptureAnchors,
+      sunoPrompt: this.buildFallbackSunoPrompt(
+        title,
+        themeStatement,
+        verse1,
+        chorus,
+        verse2,
+        bridge,
+        outro,
+        style,
+        mode,
+        useCase,
+        studyPrompt,
+        elements,
+      ),
+    };
+
+    return lyrics;
+  }
+
+  private buildFallbackTitle(elements: SermonElements, isSpanish: boolean): string {
+    const source = this.compactText(elements.theme || elements.bigIdea || elements.title || elements.passage);
+    const words = source
+      .replace(/[^a-zA-ZÀ-ÿ0-9\s']/g, ' ')
+      .split(/\s+/)
+      .map((word) => word.trim())
+      .filter(Boolean);
+    const picked = words.slice(0, 4).join(' ');
+    if (picked) {
+      return picked
+        .split(/\s+/)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+    }
+    return isSpanish ? 'Canto de Gracia' : 'Grace Song';
+  }
+
+  private buildFallbackHook(elements: SermonElements, isSpanish: boolean): string {
+    const source = `${elements.theme || ''} ${elements.bigIdea || ''} ${elements.coreApplication || ''} ${elements.passage || ''}`.toLowerCase();
+    if (source.includes('home') || source.includes('return') || source.includes('come back')) {
+      return isSpanish ? 'Volvemos a casa en Tu amor' : 'We are coming home to You';
+    }
+    if (source.includes('grace') || source.includes('gracia') || source.includes('mercy') || source.includes('misericordia')) {
+      return isSpanish ? 'Tu gracia nos llamó' : 'Your grace keeps calling us';
+    }
+    if (source.includes('father') || source.includes('padre')) {
+      return isSpanish ? 'Padre, venimos a Ti' : 'Father, we are coming now';
+    }
+    if (source.includes('love') || source.includes('amor')) {
+      return isSpanish ? 'Tu amor nos levantó' : 'Your love has lifted us';
+    }
+    return isSpanish ? 'Jesús nos llama otra vez' : 'Jesus keeps calling us home';
+  }
+
+  private buildFallbackScriptureAnchors(elements: SermonElements, isSpanish: boolean): string[] {
+    const passage = this.compactText(elements.passage || '');
+    const theme = this.compactText(elements.theme || elements.bigIdea || '');
+    if (isSpanish) {
+      return [
+        `${passage || 'Lucas 15'} - la gracia del Padre para el hijo que vuelve`,
+        `${passage || 'Lucas 15'} - restauración, dignidad y bienvenida`,
+        `${theme || 'La gracia de Dios'} - el llamado a regresar`,
+      ];
+    }
+    return [
+      `${passage || 'Luke 15'} - the Father welcomes the returning child`,
+      `${passage || 'Luke 15'} - grace restores dignity and belonging`,
+      `${theme || 'God\'s grace'} - the call to come home`,
+    ];
+  }
+
+  private buildFallbackSunoPrompt(
+    title: string,
+    themeStatement: string,
+    verse1: string[],
+    chorus: string[],
+    verse2: string[],
+    bridge: string[],
+    outro: string[],
+    style: string,
+    mode: string,
+    useCase: string,
+    studyPrompt: string | undefined,
+    elements: SermonElements,
+  ): string {
+    const sections = [
+      `[Verse 1]\n${verse1.join('\n')}`,
+      `[Chorus]\n${chorus.join('\n')}`,
+      `[Verse 2]\n${verse2.join('\n')}`,
+      `[Bridge]\n${bridge.join('\n')}`,
+      outro.length > 0 ? `[Outro]\n${outro.join('\n')}` : null,
+    ].filter(Boolean) as string[];
+
+    const body = sections.join('\n\n');
+    const direction = this.compactText(studyPrompt || 'none');
+    return [
+      `Congregational ${style} worship song for sermon use.`,
+      `Title: ${title}.`,
+      `Theme: ${themeStatement}.`,
+      `Passage: ${elements.passage || 'Scripture'}; mode: ${mode}; use case: ${useCase}.`,
+      direction ? `Creative direction: ${direction}.` : null,
+      `Singable, emotionally warm, biblically grounded, repeated hook, no spoken-word delivery.`,
+      `Lyrics:\n${body}`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  private normalizeKeyPhrases(
+    keyPhrases: string[],
+    themeText: string,
+    passageText: string,
+    isSpanish: boolean,
+  ): string[] {
+    const phrases = Array.isArray(keyPhrases) ? keyPhrases.map((value) => this.compactText(value)).filter(Boolean) : [];
+    if (phrases.length > 0) {
+      return phrases.slice(0, 6);
+    }
+
+    const fallbackPhrases = isSpanish
+      ? [
+          themeText || 'la gracia de Dios',
+          passageText || 'la Escritura',
+          'volver al Padre',
+        ]
+      : [
+          themeText || 'God\'s grace',
+          passageText || 'Scripture',
+          'coming home',
+        ];
+
+    return fallbackPhrases.filter(Boolean).slice(0, 6);
+  }
+
+  private compactText(value: string): string {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 }
