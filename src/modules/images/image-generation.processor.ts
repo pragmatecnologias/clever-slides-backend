@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Slide, SlideImageStatus } from '../../entities/slide.entity';
 import { LocalImageProvider } from './providers/local-image.provider';
 import { OpenAiImageProvider } from './providers/openai-image.provider';
+import { FalAiImageProvider } from './providers/falai-image.provider';
 import { ImagesEventsService } from './images-events.service';
 
 @Processor('image-generation')
@@ -14,6 +15,7 @@ export class ImageGenerationProcessor {
     private slideRepository: Repository<Slide>,
     private localProvider: LocalImageProvider,
     private openAiProvider: OpenAiImageProvider,
+    private falAiProvider: FalAiImageProvider,
     private imagesEventsService: ImagesEventsService,
   ) {}
 
@@ -55,6 +57,8 @@ export class ImageGenerationProcessor {
       const finalPrompt = this.applyPresetToPrompt(prompt, preset);
       const imageUrl = provider === 'openai'
         ? await this.openAiProvider.generate(finalPrompt)
+        : provider === 'falai'
+        ? await this.falAiProvider.generate(finalPrompt)
         : await this.localProvider.generate(finalPrompt, preset);
 
       if (imageTarget === 'content') {

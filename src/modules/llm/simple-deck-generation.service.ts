@@ -523,7 +523,7 @@ export class SimpleDeckGenerationService {
       content.title = shortenText(content.title || sermon.bigIdea || 'Point', 52);
       const bullets = Array.isArray(content.bullets) ? content.bullets : [];
       content.bullets = normalizeBulletList(bullets, { maxBullets: 4, maxChars: 68 });
-      if (!content.bullets.length && content.title) {
+      if (!content.bullets.length && content.title && !['point_hero', 'split_support'].includes(String(slide.layoutKey || ''))) {
         content.bullets = [shortenText(content.title, 68)];
       }
     }

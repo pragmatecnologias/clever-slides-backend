@@ -9,8 +9,9 @@ import { ImageMedia, ImageMediaStatus } from '../../entities/image-media.entity'
 import { ImagesEventsService } from './images-events.service';
 import { LocalImageProvider } from './providers/local-image.provider';
 import { OpenAiImageProvider } from './providers/openai-image.provider';
+import { FalAiImageProvider } from './providers/falai-image.provider';
 
-export type ImageProvider = 'local' | 'openai';
+export type ImageProvider = 'local' | 'openai' | 'falai';
 
 @Injectable()
 export class ImagesService {
@@ -24,6 +25,7 @@ export class ImagesService {
     private imagesEventsService: ImagesEventsService,
     private localProvider: LocalImageProvider,
     private openAiProvider: OpenAiImageProvider,
+    private falAiProvider: FalAiImageProvider,
   ) {}
 
   async requestImage(

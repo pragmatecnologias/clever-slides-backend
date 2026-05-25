@@ -2,6 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import * as express from 'express';
+import { resolve } from 'path';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,6 +24,12 @@ async function bootstrap() {
   }));
   
   app.setGlobalPrefix('api/v1');
+
+  // Serve generated image files — matches /api/v1/uploads/* after prefix strip
+  const uploadsPath = resolve(process.env.STORAGE_PATH || './uploads');
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.use('/uploads', express.static(uploadsPath));
+  console.log(`📁 Serving static files from: ${uploadsPath}`);
 
   // OpenAPI/Swagger setup for API discovery
   const config = new DocumentBuilder()

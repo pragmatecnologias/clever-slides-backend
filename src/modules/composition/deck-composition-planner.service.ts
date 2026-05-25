@@ -10,9 +10,16 @@ import {
 } from '../../../../../shared/deck-composition.contract';
 import { VisualStyleProfile } from './visual-style.service';
 import { cleanText, formatPresentationSentence, shortenText, normalizeBulletList } from '../llm/slide-content-formatting';
+import { SermonSlideCopyPlan, SermonSlideCopywriterService } from './sermon-slide-copywriter.service';
+import { SlideCopyQualityValidator } from './slide-copy-quality-validator.service';
 
 @Injectable()
 export class DeckCompositionPlanner {
+  constructor(
+    private readonly copywriter: SermonSlideCopywriterService,
+    private readonly copyQualityValidator: SlideCopyQualityValidator,
+  ) {}
+
   plan(
     sermon: Sermon,
     deckIntent: DeckIntentKey,
@@ -45,58 +52,11 @@ export class DeckCompositionPlanner {
     visualStyle: VisualStyleProfile,
     deckSize: DeckSizeKey,
   ): DeckCompositionSlide[] {
-    const points = this.extractPointRecords(sermon);
-    const sourceText = `${sermon.mainScriptureRef || ''} ${sermon.bigIdea || ''} ${sermon.title || ''}`.toLowerCase();
-    const isNarrative = understanding.sermonMovement === 'narrative' || /luke\s*15|story|homecoming|return/.test(sourceText);
-    const isProphetic = understanding.sermonMovement === 'prophetic';
-    const isEvangelistic = understanding.sermonMovement === 'evangelistic' || deckIntent === 'evangelistic_appeal';
-
-    const slides: DeckCompositionSlide[] = [];
-    slides.push(this.titleSlide(sermon, understanding));
-    if (sermon.mainScriptureRef) slides.push(this.scriptureSlide(sermon, understanding));
-    slides.push(this.bigIdeaSlide(sermon, understanding));
-
-    if (isNarrative) {
-      if (points[0]) slides.push(this.storyMomentSlide(sermon, understanding, this.storyMomentTitle(sermon, understanding, 0), points[0], 0));
-      if (points[1]) slides.push(this.storyMomentSlide(sermon, understanding, this.storyMomentTitle(sermon, understanding, 1), points[1], 1));
-      if (points[2]) slides.push(this.storyMomentSlide(sermon, understanding, this.storyMomentTitle(sermon, understanding, 2), points[2], 2));
-      slides.push(this.applicationSlide(sermon, understanding, points));
-      slides.push(this.reflectionSlide(sermon, understanding));
-      slides.push(this.appealSlide(sermon, understanding));
-      slides.push(this.closingSlide(sermon, understanding));
-      return this.trimToTarget(slides, deckSize, 8, 12);
-    }
-
-    if (isProphetic) {
-      slides.push(this.bigIdeaSlide(sermon, understanding, 'The everlasting gospel'));
-      if (points[0]) slides.push(this.sermonPointSlide(sermon, understanding, points[0], 0));
-      if (points[1]) slides.push(this.sermonPointSlide(sermon, understanding, points[1], 1));
-      slides.push(this.egwSupportSlide(sermon, understanding));
-      slides.push(this.applicationSlide(sermon, understanding, points, 'Live the message with hope and fidelity.'));
-      slides.push(this.appealSlide(sermon, understanding, 'Respond to God’s call with trust and worship.'));
-      slides.push(this.closingSlide(sermon, understanding, 'The Lamb leads His people faithfully.'));
-      return this.trimToTarget(slides, deckSize, 8, 12);
-    }
-
-    if (isEvangelistic) {
-      if (points[0]) slides.push(this.sermonPointSlide(sermon, understanding, points[0], 0));
-      if (points[1]) slides.push(this.sermonPointSlide(sermon, understanding, points[1], 1));
-      if (points[2]) slides.push(this.sermonPointSlide(sermon, understanding, points[2], 2));
-      slides.push(this.applicationSlide(sermon, understanding, points, 'Receive the gift of life today.'));
-      slides.push(this.reflectionSlide(sermon, understanding, 'What keeps you from receiving Christ’s gift?'));
-      slides.push(this.appealSlide(sermon, understanding));
-      slides.push(this.closingSlide(sermon, understanding));
-      return this.trimToTarget(slides, deckSize, 8, 11);
-    }
-
-    if (points[0]) slides.push(this.sermonPointSlide(sermon, understanding, points[0], 0));
-    if (points[1]) slides.push(this.sermonPointSlide(sermon, understanding, points[1], 1));
-    if (points[2]) slides.push(this.sermonPointSlide(sermon, understanding, points[2], 2));
-    slides.push(this.applicationSlide(sermon, understanding, points));
-    slides.push(this.reflectionSlide(sermon, understanding));
-    slides.push(this.appealSlide(sermon, understanding));
-    slides.push(this.closingSlide(sermon, understanding));
-    return this.trimToTarget(slides, deckSize, 8, 12);
+    const plan = this.copyQualityValidator.validateAndRepair(
+      this.copywriter.writeDeckPlan(sermon, deckIntent, deckSize, understanding),
+      understanding,
+    );
+    return this.balanceLayouts(plan).map((slide, index) => this.mapPlanToSlide(slide, index));
   }
 
   private buildSocialComposition(
@@ -104,15 +64,177 @@ export class DeckCompositionPlanner {
     understanding: SermonUnderstanding,
     visualStyle: VisualStyleProfile,
   ): DeckCompositionSlide[] {
-    const slides: DeckCompositionSlide[] = [];
-    slides.push(this.titleSlide(sermon, understanding, 'social_hook'));
-    slides.push(this.scriptureSlide(sermon, understanding, true));
-    slides.push(this.bigIdeaSlide(sermon, understanding, 'A message worth sharing'));
-    slides.push(this.appealSlide(sermon, understanding, 'Invite someone to listen this week.', 'social_cta'));
-    if (sermon.ctaStyle !== 'none') {
-      slides.push(this.closingSlide(sermon, understanding, 'Join us in worship and response.', 'social_cta'));
+    const plan = this.copyQualityValidator.validateAndRepair(
+      this.copywriter.writeDeckPlan(sermon, 'social_summary', 'short', understanding),
+      understanding,
+    );
+    return this.balanceLayouts(plan).map((slide, index) => this.mapPlanToSlide(slide, index)).slice(0, 5);
+  }
+
+  private balanceLayouts(plans: SermonSlideCopyPlan[]): SermonSlideCopyPlan[] {
+    const result = [...plans];
+    for (let index = 2; index < result.length; index += 1) {
+      const prev = result[index - 1]?.layoutIntent;
+      const prevPrev = result[index - 2]?.layoutIntent;
+      if (prev && prevPrev && prev === prevPrev && result[index].layoutIntent === prev) {
+        result[index] = {
+          ...result[index],
+          layoutIntent: this.alternateLayout(result[index].slideType, result[index].layoutIntent),
+        };
+      }
     }
-    return slides.slice(0, 5);
+    return result;
+  }
+
+  private alternateLayout(type: DeckCompositionSlide['type'], current: string): string {
+    switch (type) {
+      case 'sermon_point':
+        return current === 'point_hero' ? 'split_support' : 'point_hero';
+      case 'story_moment':
+        return 'story_moment';
+      case 'application':
+        return 'application_steps';
+      case 'reflection':
+        return 'reflection_question';
+      case 'appeal':
+      case 'social_cta':
+        return 'appeal_minimal';
+      case 'closing':
+        return 'closing_blessing';
+      case 'scripture':
+      case 'social_hook':
+        return 'scripture_focus';
+      case 'big_idea':
+        return 'big_idea_center';
+      default:
+        return current;
+    }
+  }
+
+  private mapPlanToSlide(plan: SermonSlideCopyPlan, index: number): DeckCompositionSlide {
+    const layoutKey = this.layoutKeyForIntent(plan.layoutIntent, plan.slideType);
+    const title = shortenText(plan.headline, 72);
+    const subtitle = shortenText(plan.subheadline || '', 110) || undefined;
+    const reference = plan.scriptureReference ? shortenText(plan.scriptureReference, 44) : undefined;
+    const body = plan.slideType === 'scripture'
+      ? undefined
+      : plan.slideType === 'reflection' || plan.slideType === 'closing'
+        ? title
+        : subtitle || undefined;
+    const bullets = plan.bodyLines?.length
+      ? normalizeBulletList(plan.bodyLines, { maxBullets: plan.slideType === 'application' ? 3 : 3, maxChars: 74 })
+      : undefined;
+    const message = plan.slideType === 'appeal' || plan.slideType === 'social_cta'
+      ? shortenText(subtitle || title, 130)
+      : undefined;
+
+    const content: Record<string, any> = {
+      title,
+      subtitle,
+      reference,
+      body: plan.slideType === 'scripture' ? undefined : body,
+      bullets: plan.slideType === 'application' || plan.slideType === 'sermon_point' ? bullets : undefined,
+      message,
+      lines: plan.slideType === 'scripture' ? [title, ...(subtitle ? [subtitle] : [])].slice(0, 3) : undefined,
+      transitionPurpose: plan.transitionPurpose,
+      slidePurpose: plan.slidePurpose,
+      audienceMoment: plan.audienceMoment,
+      visualIntent: plan.visualIntent,
+      emotionalTone: plan.emotionalTone,
+      layoutIntent: plan.layoutIntent,
+      __copywriter: {
+        slidePurpose: plan.slidePurpose,
+        audienceMoment: plan.audienceMoment,
+        transitionPurpose: plan.transitionPurpose,
+        visualIntent: plan.visualIntent,
+      },
+    };
+
+    if (layoutKey === 'point_hero') {
+      content.subtitle = subtitle;
+      content.reference = reference;
+      content.bullets = bullets?.slice(0, 1);
+    }
+
+    if (layoutKey === 'split_support') {
+      content.body = subtitle || bullets?.[0] || '';
+      content.subtitle = bullets?.[0] && subtitle && bullets[0] !== subtitle ? bullets[0] : subtitle;
+      content.bullets = undefined;
+    }
+
+    if (layoutKey === 'application_steps') {
+      content.body = undefined;
+      content.subtitle = subtitle;
+      content.bullets = bullets?.slice(0, 3);
+    }
+
+    if (layoutKey === 'reflection_question') {
+      content.title = title;
+      content.body = subtitle || '';
+      content.bullets = undefined;
+    }
+
+    if (layoutKey === 'closing_blessing') {
+      content.title = title;
+      content.body = subtitle || '';
+      content.bullets = undefined;
+    }
+
+    if (layoutKey === 'cinematic_title') {
+      content.reference = reference;
+    }
+
+    return {
+      id: plan.id || `${plan.slideType}-${index + 1}`,
+      type: plan.slideType,
+      layoutKey,
+      title,
+      subtitle,
+      reference,
+      body: content.body,
+      bullets: content.bullets,
+      message,
+      speakerNotes: shortenText(plan.speakerNotes, 1200),
+      content,
+    };
+  }
+
+  private layoutKeyForIntent(layoutIntent: string, slideType: DeckCompositionSlide['type']): string {
+    switch (layoutIntent) {
+      case 'cinematic_title':
+      case 'scripture_focus':
+      case 'big_idea_center':
+      case 'story_moment':
+      case 'application_steps':
+      case 'reflection_question':
+      case 'appeal_minimal':
+      case 'closing_blessing':
+      case 'point_hero':
+      case 'split_support':
+        return layoutIntent;
+      default:
+        switch (slideType) {
+          case 'title':
+            return 'cinematic_title';
+          case 'scripture':
+            return 'scripture_focus';
+          case 'big_idea':
+            return 'big_idea_center';
+          case 'story_moment':
+            return 'story_moment';
+          case 'application':
+            return 'application_steps';
+          case 'reflection':
+            return 'reflection_question';
+          case 'appeal':
+          case 'social_cta':
+            return 'appeal_minimal';
+          case 'closing':
+            return 'closing_blessing';
+          default:
+            return 'point_hero';
+        }
+    }
   }
 
   private trimToTarget(slides: DeckCompositionSlide[], deckSize: DeckSizeKey, minSlides: number, maxSlides: number) {

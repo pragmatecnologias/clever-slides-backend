@@ -8,15 +8,15 @@ import {
 import { cleanText, normalizeBulletList, shortenText, splitTextIntoLines } from '../llm/slide-content-formatting';
 import { VisualStyleProfile } from './visual-style.service';
 import { TypographyService, TypographyTokens } from './typography.service';
+import { SlideCopyQualityValidator } from './slide-copy-quality-validator.service';
 
 export interface DeckQualityScore {
   overall: number;
-  typography: number;
-  visualStyle: number;
-  layoutRhythm: number;
-  contentQuality: number;
-  backgroundUsage: number;
-  projectionReadability: number;
+  slideCopyQuality: number;
+  layoutContentFit: number;
+  typographyReadability: number;
+  visualRhythm: number;
+  speakerNotes: number;
   exportFidelity: number;
   passed: boolean;
   categoryFailures: string[];
@@ -24,7 +24,10 @@ export interface DeckQualityScore {
 
 @Injectable()
 export class DeckQualityValidator {
-  constructor(private readonly typographyService: TypographyService) {}
+  constructor(
+    private readonly typographyService: TypographyService,
+    private readonly slideCopyQualityValidator: SlideCopyQualityValidator,
+  ) {}
 
   validate(composition: DeckComposition, understanding: SermonUnderstanding, style: VisualStyleProfile): DeckComposition {
     const warnings: DeckQualityWarning[] = [];
@@ -64,16 +67,22 @@ export class DeckQualityValidator {
     tokens: TypographyTokens,
   ): DeckQualityScore {
     const categories: Omit<DeckQualityScore, 'overall' | 'passed' | 'categoryFailures'> = {
-      typography: this.scoreTypography(slides, style, tokens),
-      visualStyle: this.scoreVisualStyle(slides, style, understanding),
-      layoutRhythm: this.scoreLayoutRhythm(slides),
-      contentQuality: this.scoreContentQuality(slides, warnings),
-      backgroundUsage: this.scoreBackgroundUsage(slides),
-      projectionReadability: this.scoreProjectionReadability(slides, tokens),
+      slideCopyQuality: this.scoreSlideCopyQuality(slides, warnings),
+      layoutContentFit: this.scoreLayoutContentFit(slides),
+      typographyReadability: Math.round((this.scoreTypography(slides, style, tokens) + this.scoreProjectionReadability(slides, tokens)) / 2),
+      visualRhythm: Math.round((this.scoreLayoutRhythm(slides) + this.scoreVisualStyle(slides, style, understanding) + this.scoreBackgroundUsage(slides)) / 3),
+      speakerNotes: this.scoreSpeakerNotes(slides),
       exportFidelity: this.scoreExportFidelity(slides, style),
     };
 
-    const weights = { typography: 15, visualStyle: 15, layoutRhythm: 15, contentQuality: 20, backgroundUsage: 15, projectionReadability: 10, exportFidelity: 10 };
+    const weights = {
+      slideCopyQuality: 25,
+      layoutContentFit: 20,
+      typographyReadability: 15,
+      visualRhythm: 15,
+      speakerNotes: 15,
+      exportFidelity: 10,
+    };
     let overall = 0;
     for (const [key, weight] of Object.entries(weights)) {
       overall += (categories[key as keyof typeof categories] / 100) * weight;
@@ -81,13 +90,13 @@ export class DeckQualityValidator {
     overall = Math.round(overall);
 
     const categoryFailures = Object.entries(categories)
-      .filter(([key, score]) => (weights as any)[key] >= 10 && score < 75)
+      .filter(([key, score]) => (weights as any)[key] >= 10 && score < (key === 'layoutContentFit' || key === 'speakerNotes' ? 80 : 75))
       .map(([key]) => key);
 
     return {
       ...categories,
       overall,
-      passed: overall >= 85 && !categoryFailures.length,
+      passed: overall >= 85 && categories.slideCopyQuality >= 85 && categories.layoutContentFit >= 80 && categories.speakerNotes >= 80 && !categoryFailures.length,
       categoryFailures,
     };
   }
@@ -143,7 +152,7 @@ export class DeckQualityValidator {
     return Math.max(0, Math.min(100, score));
   }
 
-  private scoreContentQuality(slides: DeckCompositionSlide[], warnings: DeckQualityWarning[]): number {
+  private scoreSlideCopyQuality(slides: DeckCompositionSlide[], warnings: DeckQualityWarning[]): number {
     let score = 85;
     // Title presence
     const missingTitles = slides.filter(s => !s.title).length;
@@ -163,6 +172,37 @@ export class DeckQualityValidator {
     // Transition purpose
     const missingTransition = slides.filter(s => !(s as any).transitionPurpose).length;
     if (missingTransition > slides.length * 0.3) score -= 5;
+    return Math.max(0, Math.min(100, score));
+  }
+
+  private scoreLayoutContentFit(slides: DeckCompositionSlide[]): number {
+    let score = 86;
+    let repeatedFamilies = 0;
+    let missingReferenceOnScripture = 0;
+    for (let index = 0; index < slides.length; index += 1) {
+      const slide = slides[index];
+      const family = slide.layoutKey || slide.type;
+      if (index >= 2 && family === (slides[index - 1].layoutKey || slides[index - 1].type) && family === (slides[index - 2].layoutKey || slides[index - 2].type)) {
+        repeatedFamilies += 1;
+      }
+      if (slide.type === 'scripture' && !slide.reference) missingReferenceOnScripture += 1;
+      if (slide.type === 'sermon_point' && !(slide.subtitle || slide.body || slide.bullets?.length)) score -= 6;
+      if (slide.type === 'application' && (!slide.bullets || slide.bullets.length < 2)) score -= 8;
+    }
+    score -= repeatedFamilies * 8;
+    score -= missingReferenceOnScripture * 5;
+    const uniqueLayouts = new Set(slides.map((slide) => slide.layoutKey));
+    if (slides.length >= 10 && uniqueLayouts.size < 5) score -= 12;
+    return Math.max(0, Math.min(100, score));
+  }
+
+  private scoreSpeakerNotes(slides: DeckCompositionSlide[]): number {
+    let score = 88;
+    const pointSlides = slides.filter((slide) => slide.type === 'sermon_point' || slide.type === 'story_moment');
+    const shortPointNotes = pointSlides.filter((slide) => cleanText(slide.speakerNotes).length < 80).length;
+    const genericNotes = slides.filter((slide) => /^(transition slide|open with warmth|close with hope and clarity)/i.test(cleanText(slide.speakerNotes))).length;
+    score -= shortPointNotes * 6;
+    score -= genericNotes * 4;
     return Math.max(0, Math.min(100, score));
   }
 
@@ -214,14 +254,33 @@ export class DeckQualityValidator {
     style: VisualStyleProfile,
   ): DeckCompositionSlide {
     const slideWarnings: DeckQualityWarning[] = [];
+    const repairedPlan = this.slideCopyQualityValidator.validateAndRepair([
+      {
+        id: slide.id,
+        slidePurpose: String((slide.content as any)?.slidePurpose || slide.type),
+        slideType: slide.type,
+        audienceMoment: String((slide.content as any)?.audienceMoment || ''),
+        headline: slide.title || '',
+        subheadline: slide.subtitle || slide.body || slide.message || '',
+        bodyLines: Array.isArray(slide.bullets) ? slide.bullets : [],
+        scriptureReference: slide.reference,
+        speakerNotes: slide.speakerNotes || '',
+        layoutIntent: slide.layoutKey,
+        visualIntent: String((slide.content as any)?.visualIntent || ''),
+        emotionalTone: String((slide.content as any)?.emotionalTone || understanding.emotionalTone || ''),
+        transitionPurpose: String((slide.content as any)?.transitionPurpose || ''),
+      },
+    ], understanding)[0];
     const normalized: DeckCompositionSlide = {
       ...slide,
-      title: slide.title ? shortenText(cleanText(slide.title), 58) : slide.title,
-      subtitle: slide.subtitle ? shortenText(cleanText(slide.subtitle), 80) : slide.subtitle,
+      title: repairedPlan?.headline ? shortenText(cleanText(repairedPlan.headline), 58) : slide.title,
+      subtitle: repairedPlan?.subheadline ? shortenText(cleanText(repairedPlan.subheadline), 96) : slide.subtitle,
       body: slide.body ? shortenText(cleanText(slide.body), 180) : slide.body,
       message: slide.message ? shortenText(cleanText(slide.message), 140) : slide.message,
-      bullets: Array.isArray(slide.bullets) ? normalizeBulletList(slide.bullets, { maxBullets: 4, maxChars: 72 }) : slide.bullets,
-      speakerNotes: slide.speakerNotes ? shortenText(cleanText(slide.speakerNotes), 700) : this.defaultNotes(slide, understanding),
+      bullets: repairedPlan?.bodyLines?.length
+        ? normalizeBulletList(repairedPlan.bodyLines, { maxBullets: 4, maxChars: 72 })
+        : Array.isArray(slide.bullets) ? normalizeBulletList(slide.bullets, { maxBullets: 4, maxChars: 72 }) : slide.bullets,
+      speakerNotes: repairedPlan?.speakerNotes ? shortenText(cleanText(repairedPlan.speakerNotes), 900) : slide.speakerNotes ? shortenText(cleanText(slide.speakerNotes), 700) : this.defaultNotes(slide, understanding),
       qualityWarnings: slide.qualityWarnings || [],
     };
 
@@ -255,6 +314,36 @@ export class DeckQualityValidator {
         message: `Slide ${index + 1} has no title.`,
         suggestion: 'Add a clear title for projection.',
         slideIndex: index, slideType: slide.type,
+      });
+    }
+
+    if (slide.type === 'sermon_point' && (!normalized.title || normalized.title.split(/\s+/).length < 4)) {
+      slideWarnings.push({
+        code: 'point-headline-weak', severity: 'warning',
+        message: `Slide ${index + 1} point headline is too thin for projection.`,
+        suggestion: 'Use a complete, congregation-facing thought.',
+        slideIndex: index, slideType: slide.type, autoFixed: true,
+      });
+    }
+
+    if (slide.type === 'application' && Array.isArray(normalized.bullets)) {
+      const invalidApplication = normalized.bullets.some((line) => !/^(ask|stop|let|come|receive|celebrate|worship|reject|endure|believe|walk|hear|hold|live|trust|obey|continue|choose)\b/i.test(line));
+      if (invalidApplication) {
+        slideWarnings.push({
+          code: 'application-actions-weak', severity: 'warning',
+          message: `Slide ${index + 1} application needs stronger action language.`,
+          suggestion: 'Lead each line with a verb.',
+          slideIndex: index, slideType: slide.type, autoFixed: true,
+        });
+      }
+    }
+
+    if (/(distance and longing|the road back|the welcome home|god's guidance|biblical support)/i.test(normalized.title || '')) {
+      slideWarnings.push({
+        code: 'headline-too-generic', severity: 'warning',
+        message: `Slide ${index + 1} headline still reads like a fragment.`,
+        suggestion: 'Rewrite it as a complete sermonic sentence.',
+        slideIndex: index, slideType: slide.type, autoFixed: true,
       });
     }
 
@@ -293,6 +382,6 @@ export class DeckQualityValidator {
       slide.title || slide.reference || slide.message || slide.body || understanding.centralMessage,
       understanding.pastoralGoal,
     ].filter(Boolean).join('. ');
-    return shortenText(base, 240);
+    return shortenText(`${base}. Connect this slide to the previous moment in the sermon and show the congregation why this truth matters now.`, 360);
   }
 }

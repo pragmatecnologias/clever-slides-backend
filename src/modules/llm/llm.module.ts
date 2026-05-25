@@ -10,6 +10,8 @@ import { ImagePromptAssignmentService } from '../composition/image-prompt-assign
 import { DeckQualityValidator } from '../composition/deck-quality-validator.service';
 import { SermonDeckComposerService } from '../composition/sermon-deck-composer.service';
 import { TypographyService } from '../composition/typography.service';
+import { SermonSlideCopywriterService } from '../composition/sermon-slide-copywriter.service';
+import { SlideCopyQualityValidator } from '../composition/slide-copy-quality-validator.service';
 
 @Module({
   imports: [ConfigModule],
@@ -24,6 +26,8 @@ import { TypographyService } from '../composition/typography.service';
     DeckQualityValidator,
     SermonDeckComposerService,
     TypographyService,
+    SermonSlideCopywriterService,
+    SlideCopyQualityValidator,
   ],
   exports: [
     LlmClient,
@@ -36,6 +40,8 @@ import { TypographyService } from '../composition/typography.service';
     DeckQualityValidator,
     SermonDeckComposerService,
     TypographyService,
+    SermonSlideCopywriterService,
+    SlideCopyQualityValidator,
   ],
 })
 export class LlmModule {}

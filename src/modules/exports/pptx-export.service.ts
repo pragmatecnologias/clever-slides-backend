@@ -133,6 +133,8 @@ export class PptxExportService {
       case 'point_with_support':
       case 'point_statement':
       case 'support_verse':
+      case 'point_hero':
+      case 'split_support':
         return this.addPointSlide(slide, content, primaryColor, secondaryColor);
       case 'story_moment':
         return this.addCenteredSlide(slide, content, {
@@ -225,6 +227,29 @@ export class PptxExportService {
         fit: 'shrink',
       });
     }
+
+    if (content.reference) {
+      const referenceStyle = this.getStyle(content, 'reference', {
+        fontSize: 18,
+        color: '94A3B8',
+        align: 'center',
+      });
+      slide.addText(content.reference, {
+        x: 2.2,
+        y: 4.95,
+        w: 5.6,
+        h: 0.4,
+        fontSize: referenceStyle.fontSize || 18,
+        bold: referenceStyle.bold,
+        italic: referenceStyle.italic,
+        underline: referenceStyle.underline,
+        color: this.normalizeColor(referenceStyle.color, '94A3B8'),
+        align: referenceStyle.align || 'center',
+        fontFace: referenceStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
   }
 
   private addScriptureSlide(slide: any, content: any, color: string) {
@@ -307,8 +332,78 @@ export class PptxExportService {
       fit: 'shrink',
     });
 
+    if (content.reference) {
+      const referenceStyle = this.getStyle(content, 'reference', {
+        fontSize: 18,
+        bold: true,
+        color: secondaryColor,
+        align: 'left',
+      });
+      slide.addText(content.reference, {
+        x: 0.6,
+        y: 1.95,
+        w: 4.2,
+        h: 0.4,
+        fontSize: referenceStyle.fontSize || 18,
+        bold: referenceStyle.bold ?? true,
+        italic: referenceStyle.italic,
+        underline: referenceStyle.underline,
+        color: this.normalizeColor(referenceStyle.color, this.normalizeColor(secondaryColor)),
+        align: referenceStyle.align || 'left',
+        fontFace: referenceStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+
+    if (content.subtitle) {
+      const subtitleStyle = this.getStyle(content, 'subtitle', {
+        fontSize: 24,
+        color: '334155',
+        align: 'left',
+      });
+      slide.addText(content.subtitle, {
+        x: 0.6,
+        y: 2.45,
+        w: 8.1,
+        h: 0.8,
+        fontSize: subtitleStyle.fontSize || 24,
+        bold: subtitleStyle.bold,
+        italic: subtitleStyle.italic,
+        underline: subtitleStyle.underline,
+        color: this.normalizeColor(subtitleStyle.color, '334155'),
+        align: subtitleStyle.align || 'left',
+        fontFace: subtitleStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+
+    if (content.body) {
+      const bodyStyle = this.getStyle(content, 'body', {
+        fontSize: 20,
+        color: '475569',
+        align: 'left',
+      });
+      slide.addText(content.body, {
+        x: 0.6,
+        y: 3.15,
+        w: 4.4,
+        h: 1.2,
+        fontSize: bodyStyle.fontSize || 20,
+        bold: bodyStyle.bold,
+        italic: bodyStyle.italic,
+        underline: bodyStyle.underline,
+        color: this.normalizeColor(bodyStyle.color, '475569'),
+        align: bodyStyle.align || 'left',
+        fontFace: bodyStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+
     const bullets = content.bullets || [];
-    const startY = 2.5;
+    const startY = content.subtitle || content.body ? 4.0 : 2.5;
 
     const bulletStyle = this.getStyle(content, 'bullets', {
       fontSize: 28,
@@ -318,9 +413,9 @@ export class PptxExportService {
 
     bullets.forEach((bullet: string, index: number) => {
       slide.addText(bullet, {
-        x: 1.5,
+        x: 1.1,
         y: startY + index * 0.9,
-        w: 7.5,
+        w: 7.9,
         h: 0.7,
         fontSize: bulletStyle.fontSize || 28,
         bullet: { code: '2022', color: secondaryColor },

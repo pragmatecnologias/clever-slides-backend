@@ -11,6 +11,7 @@ import { ImagesMediaController } from './images-media.controller';
 import { ImageGenerationProcessor } from './image-generation.processor';
 import { LocalImageProvider } from './providers/local-image.provider';
 import { OpenAiImageProvider } from './providers/openai-image.provider';
+import { FalAiImageProvider } from './providers/falai-image.provider';
 import { ImagesEventsService } from './images-events.service';
 import { ImagesEventsController } from './images-events.controller';
 
@@ -27,7 +28,7 @@ import { ImagesEventsController } from './images-events.controller';
     }),
   ],
   controllers: [ImagesController, ImagesMediaController, ImagesEventsController],
-  providers: [ImagesService, ImageGenerationProcessor, LocalImageProvider, OpenAiImageProvider, ImagesEventsService],
-  exports: [ImagesService, ImagesEventsService, LocalImageProvider, OpenAiImageProvider],
+  providers: [ImagesService, ImageGenerationProcessor, LocalImageProvider, OpenAiImageProvider, FalAiImageProvider, ImagesEventsService],
+  exports: [ImagesService, ImagesEventsService, LocalImageProvider, OpenAiImageProvider, FalAiImageProvider],
 })
 export class ImagesModule {}
