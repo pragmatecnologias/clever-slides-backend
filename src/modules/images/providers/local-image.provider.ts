@@ -179,46 +179,54 @@ export class LocalImageProvider {
 
   private drawWorship(ctx: CanvasRenderingContext2D, width: number, height: number) {
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, '#111827');
-    gradient.addColorStop(1, '#0f172a');
+    gradient.addColorStop(0, '#0F172A');
+    gradient.addColorStop(0.65, '#111827');
+    gradient.addColorStop(1, '#0B1120');
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    const glow = ctx.createRadialGradient(width * 0.52, height * 0.35, 0, width * 0.52, height * 0.35, width * 0.5);
-    glow.addColorStop(0, 'rgba(251, 191, 36, 0.55)');
+    const glow = ctx.createRadialGradient(width * 0.5, height * 0.28, 0, width * 0.5, height * 0.28, width * 0.52);
+    glow.addColorStop(0, 'rgba(253, 224, 71, 0.65)');
+    glow.addColorStop(0.45, 'rgba(251, 191, 36, 0.3)');
     glow.addColorStop(1, 'rgba(15, 23, 42, 0)');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    for (let i = 0; i < 5; i += 1) {
-      const w = width * (0.08 + i * 0.02);
-      const h = height * (0.12 + i * 0.035);
-      const x = width * 0.18 + i * width * 0.12;
-      const y = height * 0.52 - h;
-      ctx.fillRect(x, y, w, h);
-    }
+    ctx.globalAlpha = 0.65;
+    this.drawCross(ctx, width * 0.5, height * 0.24, width * 0.12, height * 0.18, 'rgba(255,255,255,0.12)', 'rgba(255,255,255,0.9)');
+    ctx.globalAlpha = 1;
+    this.drawOpenBible(ctx, width * 0.34, height * 0.6, width * 0.32, height * 0.11, 'rgba(255,255,255,0.10)', 'rgba(251, 191, 36, 0.34)');
     this.drawNoise(ctx, width, height, 0.03);
   }
 
   private drawBiblicalScene(ctx: CanvasRenderingContext2D, width: number, height: number) {
     const sky = ctx.createLinearGradient(0, 0, 0, height);
-    sky.addColorStop(0, '#1e3a8a');
-    sky.addColorStop(0.55, '#0f172a');
+    sky.addColorStop(0, '#0F172A');
+    sky.addColorStop(0.46, '#1E3A8A');
     sky.addColorStop(1, '#111827');
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.2)';
+    const horizon = ctx.createLinearGradient(0, height * 0.58, 0, height);
+    horizon.addColorStop(0, 'rgba(251, 191, 36, 0.34)');
+    horizon.addColorStop(1, 'rgba(15, 23, 42, 0)');
+    ctx.fillStyle = horizon;
+    ctx.fillRect(0, height * 0.5, width, height * 0.5);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.beginPath();
-    ctx.moveTo(0, height * 0.65);
-    ctx.lineTo(width * 0.3, height * 0.45);
+    ctx.moveTo(width * 0.12, height * 0.72);
+    ctx.lineTo(width * 0.34, height * 0.48);
     ctx.lineTo(width * 0.58, height * 0.7);
-    ctx.lineTo(width, height * 0.52);
-    ctx.lineTo(width, height);
-    ctx.lineTo(0, height);
+    ctx.lineTo(width * 0.82, height * 0.44);
+    ctx.lineTo(width * 0.9, height * 0.56);
+    ctx.lineTo(width * 0.82, height * 0.74);
+    ctx.lineTo(width * 0.18, height * 0.74);
     ctx.closePath();
     ctx.fill();
+
+    this.drawOpenBible(ctx, width * 0.39, height * 0.62, width * 0.22, height * 0.09, 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.65)');
+    this.drawCross(ctx, width * 0.5, height * 0.2, width * 0.08, height * 0.16, 'rgba(255,255,255,0.08)', 'rgba(253, 224, 71, 0.95)');
     this.drawNoise(ctx, width, height, 0.035);
   }
 
@@ -226,14 +234,68 @@ export class LocalImageProvider {
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
     gradient.addColorStop(0, '#14532d');
     gradient.addColorStop(0.55, '#0f766e');
-    gradient.addColorStop(1, '#082f49');
+    gradient.addColorStop(1, '#0F172A');
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, width, height);
 
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    const sun = ctx.createRadialGradient(width * 0.76, height * 0.26, 0, width * 0.76, height * 0.26, width * 0.16);
+    sun.addColorStop(0, 'rgba(253, 224, 71, 0.45)');
+    sun.addColorStop(1, 'rgba(253, 224, 71, 0)');
+    ctx.fillStyle = sun;
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = 'rgba(251, 191, 36, 0.18)';
     ctx.beginPath();
-    ctx.arc(width * 0.78, height * 0.24, width * 0.08, 0, Math.PI * 2);
+    ctx.moveTo(width * 0.12, height * 0.78);
+    ctx.quadraticCurveTo(width * 0.36, height * 0.5, width * 0.56, height * 0.62);
+    ctx.quadraticCurveTo(width * 0.7, height * 0.7, width * 0.88, height * 0.52);
+    ctx.lineTo(width * 0.88, height);
+    ctx.lineTo(width * 0.12, height);
+    ctx.closePath();
     ctx.fill();
+
+    this.drawNoise(ctx, width, height, 0.025);
+  }
+
+  private drawCross(ctx: CanvasRenderingContext2D, centerX: number, centerY: number, armWidth: number, armHeight: number, glowColor: string, lineColor: string) {
+    const glow = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(armWidth, armHeight) * 2.2);
+    glow.addColorStop(0, glowColor);
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, Math.max(armWidth, armHeight) * 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = lineColor;
+    ctx.fillRect(centerX - armWidth * 0.15, centerY - armHeight * 0.5, armWidth * 0.3, armHeight);
+    ctx.fillRect(centerX - armWidth * 0.6, centerY - armHeight * 0.08, armWidth * 1.2, armHeight * 0.16);
+  }
+
+  private drawOpenBible(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, pageColor: string, spineGlow: string) {
+    const leftPage = ctx.createLinearGradient(x, y, x + width * 0.5, y + height);
+    leftPage.addColorStop(0, pageColor);
+    leftPage.addColorStop(1, 'rgba(255,255,255,0.02)');
+    const rightPage = ctx.createLinearGradient(x + width * 0.5, y, x + width, y + height);
+    rightPage.addColorStop(0, 'rgba(255,255,255,0.02)');
+    rightPage.addColorStop(1, pageColor);
+    ctx.fillStyle = leftPage;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + width * 0.48, y + height * 0.12);
+    ctx.lineTo(x + width * 0.45, y + height);
+    ctx.lineTo(x, y + height * 0.92);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = rightPage;
+    ctx.beginPath();
+    ctx.moveTo(x + width * 0.52, y + height * 0.12);
+    ctx.lineTo(x + width, y);
+    ctx.lineTo(x + width, y + height * 0.92);
+    ctx.lineTo(x + width * 0.55, y + height);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = spineGlow;
+    ctx.fillRect(x + width * 0.48, y + height * 0.02, width * 0.04, height * 0.96);
     this.drawNoise(ctx, width, height, 0.025);
   }
 

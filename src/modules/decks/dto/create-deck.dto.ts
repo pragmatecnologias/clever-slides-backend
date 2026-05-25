@@ -19,6 +19,17 @@ export enum DeckBackgroundProvider {
   OPENAI = 'openai',
 }
 
+export enum VisualStyleKey {
+  AUTO = 'auto',
+  REVERENT_WORSHIP = 'reverent_worship',
+  WARM_PASTORAL = 'warm_pastoral',
+  EVANGELISTIC_INVITATION = 'evangelistic_invitation',
+  HOPEFUL_PROPHECY = 'hopeful_prophecy',
+  BIBLE_STUDY_CLEAN = 'bible_study_clean',
+  YOUTH_MODERN = 'youth_modern',
+  SPANISH_CHURCH_WARM = 'spanish_church_warm',
+}
+
 export class CreateDeckDto {
   @IsOptional()
   @IsString()
@@ -47,4 +58,8 @@ export class CreateDeckDto {
   @IsOptional()
   @IsString()
   backgroundPreset?: string;
+
+  @IsOptional()
+  @IsEnum(VisualStyleKey)
+  visualStyle?: VisualStyleKey;
 }

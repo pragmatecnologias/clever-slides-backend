@@ -107,25 +107,7 @@ export class PptxExportService {
         });
       }
 
-      switch (slide.type) {
-        case SlideType.TITLE:
-          this.addTitleSlide(pptxSlide, slide.content, primaryColor);
-          break;
-        case SlideType.SCRIPTURE:
-          this.addScriptureSlide(pptxSlide, slide.content, primaryColor);
-          break;
-        case SlideType.POINT:
-          this.addPointSlide(pptxSlide, slide.content, primaryColor, secondaryColor);
-          break;
-        case SlideType.APPLICATION:
-          this.addApplicationSlide(pptxSlide, slide.content, primaryColor);
-          break;
-        case SlideType.INVITATION:
-          this.addInvitationSlide(pptxSlide, slide.content, primaryColor);
-          break;
-        default:
-          this.addGenericSlide(pptxSlide, slide.content, primaryColor);
-      }
+      this.renderSlide(pptxSlide, slide.layoutKey, slide.type, slide.content, primaryColor, secondaryColor);
     }
 
     const filename = `deck-${deck.id}-${Date.now()}.pptx`;
@@ -134,6 +116,65 @@ export class PptxExportService {
     await pptx.writeFile({ fileName: filepath });
 
     return filepath;
+  }
+
+  private renderSlide(slide: any, layoutKey: string, type: SlideType, content: any, primaryColor: string, secondaryColor: string) {
+    switch (layoutKey) {
+      case 'cinematic_title':
+        return this.addTitleSlide(slide, content, primaryColor);
+      case 'scripture_focus':
+        return this.addScriptureSlide(slide, content, primaryColor);
+      case 'big_idea_center':
+        return this.addCenteredSlide(slide, content, {
+          background: 'F8FAFC',
+          titleColor: primaryColor,
+          subtitleColor: '334155',
+        });
+      case 'point_with_support':
+      case 'point_statement':
+      case 'support_verse':
+        return this.addPointSlide(slide, content, primaryColor, secondaryColor);
+      case 'story_moment':
+        return this.addCenteredSlide(slide, content, {
+          background: 'FFFFFF',
+          titleColor: primaryColor,
+          bodyColor: '334155',
+        });
+      case 'application_steps':
+        return this.addApplicationSlide(slide, content, primaryColor);
+      case 'reflection_question':
+        return this.addCenteredSlide(slide, content, {
+          background: 'F8FAFC',
+          titleColor: primaryColor,
+          bodyColor: '475569',
+        });
+      case 'appeal_minimal':
+        return this.addInvitationSlide(slide, content, primaryColor);
+      case 'closing_blessing':
+        return this.addCenteredSlide(slide, content, {
+          background: 'FFFFFF',
+          titleColor: primaryColor,
+          bodyColor: '334155',
+        });
+      case 'social_square':
+      case 'social_story':
+        return this.addSocialSlide(slide, content, primaryColor);
+      default:
+        switch (type) {
+          case SlideType.TITLE:
+            return this.addTitleSlide(slide, content, primaryColor);
+          case SlideType.SCRIPTURE:
+            return this.addScriptureSlide(slide, content, primaryColor);
+          case SlideType.POINT:
+            return this.addPointSlide(slide, content, primaryColor, secondaryColor);
+          case SlideType.APPLICATION:
+            return this.addApplicationSlide(slide, content, primaryColor);
+          case SlideType.INVITATION:
+            return this.addInvitationSlide(slide, content, primaryColor);
+          default:
+            return this.addGenericSlide(slide, content, primaryColor);
+        }
+    }
   }
 
   private addTitleSlide(slide: any, content: any, color: string) {
@@ -394,6 +435,157 @@ export class PptxExportService {
         color: this.normalizeColor(messageStyle.color, 'FFFFFF'),
         align: messageStyle.align || 'center',
         fontFace: messageStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+  }
+
+  private addCenteredSlide(
+    slide: any,
+    content: any,
+    options: { background: string; titleColor: string; subtitleColor?: string; bodyColor?: string },
+  ) {
+    slide.background = { color: options.background };
+
+    if (content.title) {
+      const titleStyle = this.getStyle(content, 'title', {
+        fontSize: 46,
+        bold: true,
+        color: options.titleColor,
+        align: 'center',
+      });
+      slide.addText(content.title, {
+        x: 0.6,
+        y: content.subtitle || content.body ? 1.6 : 2.5,
+        w: 9,
+        h: 1,
+        fontSize: titleStyle.fontSize || 46,
+        bold: titleStyle.bold ?? true,
+        italic: titleStyle.italic,
+        underline: titleStyle.underline,
+        color: this.normalizeColor(titleStyle.color, this.normalizeColor(options.titleColor)),
+        align: titleStyle.align || 'center',
+        fontFace: titleStyle.fontFamily,
+        margin: 0.03,
+        fit: 'shrink',
+      });
+    }
+
+    if (content.subtitle) {
+      const subtitleStyle = this.getStyle(content, 'subtitle', {
+        fontSize: 26,
+        color: options.subtitleColor || '475569',
+        align: 'center',
+      });
+      slide.addText(content.subtitle, {
+        x: 0.8,
+        y: 3.2,
+        w: 8.6,
+        h: 0.8,
+        fontSize: subtitleStyle.fontSize || 26,
+        bold: subtitleStyle.bold,
+        italic: subtitleStyle.italic,
+        underline: subtitleStyle.underline,
+        color: this.normalizeColor(subtitleStyle.color, this.normalizeColor(options.subtitleColor || '475569')),
+        align: subtitleStyle.align || 'center',
+        fontFace: subtitleStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+
+    if (content.body) {
+      const bodyStyle = this.getStyle(content, 'body', {
+        fontSize: 24,
+        color: options.bodyColor || '334155',
+        align: 'center',
+      });
+      slide.addText(content.body, {
+        x: 1,
+        y: 4.2,
+        w: 8,
+        h: 1.8,
+        fontSize: bodyStyle.fontSize || 24,
+        bold: bodyStyle.bold,
+        italic: bodyStyle.italic,
+        underline: bodyStyle.underline,
+        color: this.normalizeColor(bodyStyle.color, this.normalizeColor(options.bodyColor || '334155')),
+        align: bodyStyle.align || 'center',
+        fontFace: bodyStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+
+    if (content.message) {
+      const messageStyle = this.getStyle(content, 'message', {
+        fontSize: 24,
+        color: options.bodyColor || '334155',
+        align: 'center',
+      });
+      slide.addText(content.message, {
+        x: 1,
+        y: 4.2,
+        w: 8,
+        h: 1.8,
+        fontSize: messageStyle.fontSize || 24,
+        bold: messageStyle.bold,
+        italic: messageStyle.italic,
+        underline: messageStyle.underline,
+        color: this.normalizeColor(messageStyle.color, this.normalizeColor(options.bodyColor || '334155')),
+        align: messageStyle.align || 'center',
+        fontFace: messageStyle.fontFamily,
+        margin: 0.02,
+        fit: 'shrink',
+      });
+    }
+  }
+
+  private addSocialSlide(slide: any, content: any, color: string) {
+    slide.background = { color: '0F172A' };
+
+    const titleStyle = this.getStyle(content, 'title', {
+      fontSize: 46,
+      bold: true,
+      color,
+      align: 'center',
+    });
+    slide.addText(content.title || content.reference || 'Sermon', {
+      x: 0.6,
+      y: 1.8,
+      w: 8.8,
+      h: 1.2,
+      fontSize: titleStyle.fontSize || 46,
+      bold: titleStyle.bold ?? true,
+      italic: titleStyle.italic,
+      underline: titleStyle.underline,
+      color: this.normalizeColor(titleStyle.color, this.normalizeColor(color)),
+      align: titleStyle.align || 'center',
+      fontFace: titleStyle.fontFamily,
+      margin: 0.03,
+      fit: 'shrink',
+    });
+
+    const subtitle = content.subtitle || content.body || content.message || content.lines?.join(' ');
+    if (subtitle) {
+      const subtitleStyle = this.getStyle(content, 'subtitle', {
+        fontSize: 24,
+        color: 'E2E8F0',
+        align: 'center',
+      });
+      slide.addText(subtitle, {
+        x: 0.8,
+        y: 3.6,
+        w: 8.6,
+        h: 1.8,
+        fontSize: subtitleStyle.fontSize || 24,
+        bold: subtitleStyle.bold,
+        italic: subtitleStyle.italic,
+        underline: subtitleStyle.underline,
+        color: this.normalizeColor(subtitleStyle.color, 'E2E8F0'),
+        align: subtitleStyle.align || 'center',
+        fontFace: subtitleStyle.fontFamily,
         margin: 0.02,
         fit: 'shrink',
       });

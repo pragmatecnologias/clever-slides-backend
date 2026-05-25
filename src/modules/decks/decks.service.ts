@@ -10,6 +10,8 @@ import { Export } from '../../entities/export.entity';
 import { CreateDeckDto } from './dto/create-deck.dto';
 import { RegenerateDeckDto } from './dto/regenerate-deck.dto';
 import { DeckIntent } from './dto/create-deck.dto';
+import { SermonDeckComposerService } from '../composition/sermon-deck-composer.service';
+import { resolveDeckBackgroundPreset } from '../../../../../shared/deck-composition.contract';
 
 @Injectable()
 export class DecksService {
@@ -24,6 +26,7 @@ export class DecksService {
     private exportRepository: Repository<Export>,
     @InjectQueue('deck-generation')
     private deckGenerationQueue: Queue,
+    private readonly sermonDeckComposerService: SermonDeckComposerService,
   ) {}
 
   async create(sermonId: string, createDeckDto: CreateDeckDto, churchId: string) {
@@ -66,6 +69,17 @@ export class DecksService {
       throw new NotFoundException('Theme not found');
     }
 
+    const composition = this.sermonDeckComposerService.composeDeck(
+      sermon,
+      createDeckDto.deckIntent || DeckIntent.SERMON_PRESENTATION,
+      createDeckDto.deckSize || 'standard',
+      (createDeckDto as any).visualStyle || 'auto',
+      {
+        sermonId: sermon.id,
+        themeId: theme.id,
+      },
+    );
+
     const deck = this.deckRepository.create({
       sermonId,
       themeId: theme.id,
@@ -75,6 +89,7 @@ export class DecksService {
       templatePackId: createDeckDto.templatePackId || theme.defaultTemplatePackId,
       templatePlan: createDeckDto.templatePlan,
       deckIntent: createDeckDto.deckIntent || DeckIntent.SERMON_PRESENTATION,
+      composition,
     });
 
     const savedDeck = await this.deckRepository.save(deck);
@@ -86,7 +101,12 @@ export class DecksService {
       templatePlan: createDeckDto.templatePlan,
       templatePackId: createDeckDto.templatePackId || theme.defaultTemplatePackId,
       backgroundProvider: createDeckDto.backgroundProvider || 'local',
-      backgroundPreset: createDeckDto.backgroundPreset || 'modern',
+      backgroundPreset: resolveDeckBackgroundPreset(
+        (createDeckDto as any).visualStyle || 'auto',
+        createDeckDto.deckIntent || DeckIntent.SERMON_PRESENTATION,
+        createDeckDto.backgroundPreset || null,
+      ),
+      visualStyle: (createDeckDto as any).visualStyle || 'auto',
     });
 
     return savedDeck;
@@ -150,6 +170,17 @@ export class DecksService {
       deck.deckIntent = regenerateDto.deckIntent;
     }
 
+    deck.composition = this.sermonDeckComposerService.composeDeck(
+      deck.sermon,
+      deck.deckIntent || DeckIntent.SERMON_PRESENTATION,
+      'standard',
+      regenerateDto?.visualStyle || deck.composition?.visualStyle || 'auto',
+      {
+        sermonId: deck.sermon?.id,
+        themeId: deck.themeId,
+      },
+    );
+
     deck.status = DeckStatus.GENERATING;
     await this.deckRepository.save(deck);
 
@@ -159,6 +190,12 @@ export class DecksService {
       deckIntent: deck.deckIntent || DeckIntent.SERMON_PRESENTATION,
       templatePlan: deck.templatePlan,
       templatePackId: deck.templatePackId,
+      backgroundPreset: resolveDeckBackgroundPreset(
+        (regenerateDto?.visualStyle || deck.composition?.visualStyle || 'auto') as any,
+        deck.deckIntent || DeckIntent.SERMON_PRESENTATION,
+        null,
+      ),
+      visualStyle: deck.composition?.visualStyle || 'auto',
     });
 
     return deck;

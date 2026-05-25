@@ -3,6 +3,7 @@ import { Sermon } from '../../entities/sermon.entity';
 import { BrandTheme } from '../../entities/brand-theme.entity';
 import { SlideType } from '../../entities/slide-types';
 import { SlideTemplate } from '../../entities/slide-template.entity';
+import { DeckComposition, DeckCompositionSlide, DeckIntentKey } from '../../../../../shared/deck-composition.contract';
 import {
   buildSlideStyleDefaults,
   cleanText,
@@ -20,6 +21,7 @@ interface SlideContent {
   speakerNotes?: string;
   templateId?: string;
   imagePrompt?: string;
+  contentImagePrompt?: string;
 }
 
 interface PointRecord {
@@ -56,8 +58,11 @@ export class SimpleDeckGenerationService {
     deckSize: string,
     templates: SlideTemplate[] = [],
     deckIntent: string = 'sermon_presentation',
+    compositionOrProgress?: DeckComposition | ((progress: number, message: string) => void),
     progressCallback?: (progress: number, message: string) => void,
   ): Promise<SlideContent[]> {
+    const composition = typeof compositionOrProgress === 'function' ? null : compositionOrProgress || null;
+    const progress = typeof compositionOrProgress === 'function' ? compositionOrProgress : progressCallback;
     const slides: SlideContent[] = [];
     let currentProgress = 0;
     const intensity = this.normalizeDeckIntensity(deckSize);
@@ -80,17 +85,112 @@ export class SimpleDeckGenerationService {
 
     const updateProgress = (increment: number, message: string) => {
       currentProgress += increment;
-      progressCallback?.(currentProgress, message);
+      progress?.(currentProgress, message);
     };
 
     const intent = this.normalizeDeckIntent(deckIntent);
     const generated =
-      intent === 'social_summary'
-        ? this.generateSocialSummaryDeck(sermon, intensity, resolveTemplateId, updateProgress)
-        : this.generateSermonPresentationDeck(sermon, intensity, resolveTemplateId, updateProgress, intent);
+      composition && Array.isArray(composition.slides) && composition.slides.length
+        ? this.generateDeckFromComposition(sermon, composition, resolveTemplateId, updateProgress)
+        : intent === 'social_summary'
+          ? this.generateSocialSummaryDeck(sermon, intensity, resolveTemplateId, updateProgress)
+          : this.generateSermonPresentationDeck(sermon, intensity, resolveTemplateId, updateProgress, intent);
 
     updateProgress(0, 'Deck generation complete!');
     return generated;
+  }
+
+  private generateDeckFromComposition(
+    sermon: Sermon,
+    composition: DeckComposition,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+    updateProgress: (increment: number, message: string) => void,
+  ): SlideContent[] {
+    const slides: SlideContent[] = [];
+    const total = Math.max(1, composition.slides.length);
+    const progressPerSlide = Math.max(3, Math.min(14, Math.floor(80 / total)));
+
+    composition.slides.forEach((compositionSlide, index) => {
+      updateProgress(progressPerSlide, `Composing slide ${index + 1} of ${total}...`);
+      slides.push(this.decorateSlide(this.fromCompositionSlide(compositionSlide, resolveTemplateId), sermon));
+    });
+
+    updateProgress(0, 'Deck generation complete!');
+    return slides;
+  }
+
+  private fromCompositionSlide(
+    compositionSlide: DeckCompositionSlide,
+    resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
+  ): SlideContent {
+    const slideType = this.mapCompositionSlideType(compositionSlide.type);
+    const layoutKey = compositionSlide.layoutKey || this.defaultLayoutForSlideType(slideType);
+    const content = {
+      ...(compositionSlide.content || {}),
+      title: compositionSlide.title || compositionSlide.content?.title,
+      subtitle: compositionSlide.subtitle || compositionSlide.content?.subtitle,
+      reference: compositionSlide.reference || compositionSlide.content?.reference,
+      body: compositionSlide.body || compositionSlide.content?.body,
+      bullets: compositionSlide.bullets || compositionSlide.content?.bullets,
+      message: compositionSlide.message || compositionSlide.content?.message,
+      lines: compositionSlide.content?.lines || (compositionSlide.body ? splitPassageText(compositionSlide.body, 3) : undefined),
+      __quality: compositionSlide.qualityWarnings || [],
+    };
+
+    return {
+      type: slideType,
+      layoutKey,
+      templateId: compositionSlide.templateId || resolveTemplateId(layoutKey, slideType),
+      content,
+      speakerNotes: compositionSlide.speakerNotes,
+      imagePrompt: compositionSlide.imagePrompt || undefined,
+      contentImagePrompt: compositionSlide.contentImagePrompt || undefined,
+    };
+  }
+
+  private mapCompositionSlideType(type: DeckCompositionSlide['type']): SlideType {
+    switch (type) {
+      case 'title':
+      case 'social_hook':
+        return SlideType.TITLE;
+      case 'scripture':
+        return SlideType.SCRIPTURE;
+      case 'sermon_point':
+        return SlideType.POINT;
+      case 'supporting_verse':
+      case 'egw_support':
+        return SlideType.SUPPORT;
+      case 'application':
+        return SlideType.APPLICATION;
+      case 'appeal':
+      case 'social_cta':
+        return SlideType.INVITATION;
+      case 'story_moment':
+      case 'big_idea':
+      case 'reflection':
+      case 'closing':
+      default:
+        return SlideType.TRANSITION;
+    }
+  }
+
+  private defaultLayoutForSlideType(type: SlideType): string {
+    switch (type) {
+      case SlideType.TITLE:
+        return 'cinematic_title';
+      case SlideType.SCRIPTURE:
+        return 'scripture_focus';
+      case SlideType.POINT:
+        return 'point_with_support';
+      case SlideType.SUPPORT:
+        return 'point_with_support';
+      case SlideType.APPLICATION:
+        return 'application_steps';
+      case SlideType.INVITATION:
+        return 'appeal_minimal';
+      default:
+        return 'big_idea_center';
+    }
   }
 
   private generateTitleSlide(
@@ -145,13 +245,18 @@ export class SimpleDeckGenerationService {
   ): SlideContent {
     const planning = this.getPlanningProfile(sermon);
     const bigIdea = this.limitText(this.asString(sermon.bigIdea || sermon.title), 120);
+    const body = this.uniqueClean([
+      planning.audienceNeed || this.t(sermon, 'Show the congregation why this matters now.', 'Muestre por qué esto importa ahora.'),
+      planning.pastoralGoal || this.t(sermon, 'Lead people toward a clear, faithful response.', 'Lleve a la iglesia hacia una respuesta clara y fiel.'),
+      this.t(sermon, 'Keep the sermon centered on this single truth.', 'Mantenga el sermón centrado en esta sola verdad.'),
+    ]).slice(0, 3).join('\n');
     return {
       type: SlideType.TRANSITION,
-      layoutKey: 'section_header_v1',
-      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
+      layoutKey: 'story_moment',
+      templateId: resolveTemplateId('story_moment', SlideType.TRANSITION),
       content: {
-        title: this.t(sermon, 'Big Idea', 'Gran idea'),
-        subtitle: bigIdea,
+        title: bigIdea,
+        body,
       },
       speakerNotes: this.t(
         sermon,
@@ -167,20 +272,26 @@ export class SimpleDeckGenerationService {
     question: string,
     resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
+    const planning = this.getPlanningProfile(sermon);
+    const body = this.uniqueClean([
+      this.t(sermon, 'What obedience would honor this truth today?', '¿Qué obediencia honraría esta verdad hoy?'),
+      planning.appealDirection || this.t(sermon, 'Invite one honest response in prayer.', 'Invite a una respuesta honesta en oración.'),
+      question,
+    ]).slice(0, 3).join('\n');
     return {
       type: SlideType.TRANSITION,
-      layoutKey: 'section_header_v1',
-      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
+      layoutKey: 'story_moment',
+      templateId: resolveTemplateId('story_moment', SlideType.TRANSITION),
       content: {
-        title: this.t(sermon, 'Reflection', 'Reflexión'),
-        subtitle: this.limitText(question, 120),
+        title: question,
+        body,
       },
       speakerNotes: this.t(
         sermon,
         `Ask the congregation to reflect on: ${question}`,
         `Invita a la iglesia a reflexionar sobre: ${question}`,
       ),
-      imagePrompt: 'Quiet reflective church atmosphere',
+      imagePrompt: 'Quiet reflective church atmosphere with soft light and space for response',
     };
   }
 
@@ -190,20 +301,25 @@ export class SimpleDeckGenerationService {
     resolveTemplateId: (layoutKey: string, slideType: SlideType) => string | undefined,
   ): SlideContent {
     const planning = this.getPlanningProfile(sermon);
+    const body = this.uniqueClean([
+      planning.pastoralGoal || this.t(sermon, 'Send the church out with hope and courage.', 'Envía a la iglesia con esperanza y valentía.'),
+      closingText,
+      this.t(sermon, 'Close with prayer, blessing, and a clear next step.', 'Cierre con oración, bendición y un siguiente paso claro.'),
+    ]).slice(0, 3).join('\n');
     return {
       type: SlideType.TRANSITION,
-      layoutKey: 'section_header_v1',
-      templateId: resolveTemplateId('section_header_v1', SlideType.TRANSITION),
+      layoutKey: 'story_moment',
+      templateId: resolveTemplateId('story_moment', SlideType.TRANSITION),
       content: {
-        title: this.t(sermon, 'Closing', 'Cierre'),
-        subtitle: this.limitText(closingText, 120),
+        title: closingText,
+        body,
       },
       speakerNotes: this.t(
         sermon,
         `End with a pastoral summary: ${closingText}. ${this.buildPlanningCue(sermon, planning)}`,
         `Cierra con un resumen pastoral: ${closingText}. ${this.buildPlanningCue(sermon, planning)}`,
       ),
-      imagePrompt: 'Warm closing church background',
+      imagePrompt: 'Warm closing church background with light, hope, and congregational response',
     };
   }
 
@@ -376,8 +492,8 @@ export class SimpleDeckGenerationService {
 
     return {
       type: SlideType.POINT,
-      layoutKey: 'point_bullets_v1',
-      templateId: resolveTemplateId('point_bullets_v1', SlideType.POINT),
+      layoutKey: 'point_statement',
+      templateId: resolveTemplateId('point_statement', SlideType.POINT),
       content: {
         title: titleWithNumber,
         bullets: finalBullets.length > 0 ? finalBullets.slice(0, 4) : [this.limitText(fullTitle, 80)],
@@ -415,7 +531,7 @@ export class SimpleDeckGenerationService {
     if (slide.type === SlideType.APPLICATION) {
       content.title = shortenText(content.title || 'Application', 40);
       const bullets = Array.isArray(content.bullets) ? content.bullets : [];
-      content.bullets = normalizeBulletList(bullets, { maxBullets: 3, maxChars: 56 });
+      content.bullets = normalizeBulletList(bullets, { maxBullets: 4, maxChars: 60 });
     }
 
     if (slide.type === SlideType.INVITATION) {
@@ -596,18 +712,33 @@ export class SimpleDeckGenerationService {
   ): SlideContent {
     const base = this.t(sermon, 'Application', 'Aplicación');
     const title = totalChunks > 1 ? `${base} (${chunkIndex + 1}/${totalChunks})` : base;
+    const isSpanish = this.isSpanishWorkspace(sermon);
+    const sermonTheme = this.limitText(this.asString(sermon.bigIdea || sermon.title), 90);
+    const scriptureRef = this.limitText(this.asString(sermon.mainScriptureRef || ''), 60);
+    const expandedBullets = this.uniqueClean([
+      ...bullets,
+      isSpanish
+        ? `Deja que ${scriptureRef || sermonTheme} te mueva a una respuesta concreta esta semana.`
+        : `Let ${scriptureRef || sermonTheme} move you toward one concrete response this week.`,
+      isSpanish
+        ? 'Habla con alguien sobre cómo Dios te está llamando a responder.'
+        : 'Talk with someone about how God is calling you to respond.',
+      isSpanish
+        ? 'Ora por un paso específico de obediencia antes de salir hoy.'
+        : 'Pray over one specific step of obedience before you leave today.',
+    ]).slice(0, 5);
     return {
       type: SlideType.APPLICATION,
-      layoutKey: 'application_bullets_v1',
-      templateId: resolveTemplateId('application_bullets_v1', SlideType.APPLICATION),
+      layoutKey: 'application_steps',
+      templateId: resolveTemplateId('application_steps', SlideType.APPLICATION),
       content: {
         title,
-        bullets: bullets.slice(0, 5),
+        bullets: expandedBullets,
       },
       speakerNotes: this.t(
         sermon,
-        `Practical applications: ${bullets.join('. ')}`,
-        `Aplicaciones prácticas: ${bullets.join('. ')}`,
+        `Practical applications: ${expandedBullets.join('. ')}`,
+        `Aplicaciones prácticas: ${expandedBullets.join('. ')}`,
       ),
       imagePrompt: 'People applying biblical truth in daily life',
     };
@@ -1284,6 +1415,70 @@ export class SimpleDeckGenerationService {
     return noteParts.join('\n\n');
   }
 
+  private buildPointSupportTitle(point: PointRecord, index: number, isSpanish: boolean): string {
+    const titleCandidate = this.limitText(this.asString(point.title), 70);
+    const summaryCandidate = this.limitText(this.asString(point.summary || point.subpoints[0] || point.applications[0] || ''), 70);
+    const source = `${titleCandidate} ${summaryCandidate} ${this.asString(point.subpoints[0])}`.toLowerCase();
+    const labelPattern = /biblical support|soporte bíblico|soporte biblico|biblical tension|tensión bíblica|tension bíblica|gospel restoration|restauraci[oó]n del evangelio|support for point|apoyo del punto/i;
+    const supportVerse = point.supportingVerses[0] ? this.limitText(this.asString(point.supportingVerses[0]), 28) : '';
+    const supportSummary = this.extractShortTitle(this.asString(point.summary || point.subpoints[0] || point.applications[0] || point.questions[0] || ''));
+    const sermonTitle = this.extractShortTitle(this.asString(point.title || point.summary || point.subpoints[0] || supportVerse));
+
+    const chooseTitle = (candidate: string): string | null => {
+      const cleaned = this.extractShortTitle(candidate);
+      if (!cleaned) return null;
+      if (labelPattern.test(cleaned.toLowerCase())) return null;
+      if (cleaned.length < 4) return null;
+      return cleaned;
+    };
+
+    if (!labelPattern.test(source)) {
+      return chooseTitle(summaryCandidate) || chooseTitle(titleCandidate) || chooseTitle(supportSummary) || chooseTitle(sermonTitle) || (
+        supportVerse
+          ? this.limitText(isSpanish ? `Texto que sostiene ${supportVerse}` : `Scripture that anchors ${supportVerse}`, 70)
+          : isSpanish
+            ? `La Escritura sostiene esta verdad`
+            : `Scripture that anchors this truth`
+      );
+    }
+
+    return (
+      chooseTitle(summaryCandidate) ||
+      chooseTitle(titleCandidate) ||
+      chooseTitle(supportSummary) ||
+      chooseTitle(sermonTitle) ||
+      (supportVerse
+        ? this.limitText(isSpanish ? `Texto que sostiene ${supportVerse}` : `Scripture that anchors ${supportVerse}`, 70)
+        : isSpanish
+          ? `La Escritura sostiene esta verdad`
+          : `Scripture that anchors this truth`)
+    );
+  }
+
+  private buildPointApplicationTitle(point: PointRecord, index: number, isSpanish: boolean): string {
+    const titleCandidate = this.limitText(this.asString(point.title), 70);
+    const summaryCandidate = this.limitText(this.asString(point.applications[0] || point.questions[0] || point.summary || ''), 70);
+    const source = `${titleCandidate} ${summaryCandidate} ${this.asString(point.applications[0])}`.toLowerCase();
+    const labelPattern = /practical response|respuesta práctica|respuesta practica|application cue|aplicaci[oó]n|response for point|respuesta para el punto/i;
+    if (labelPattern.test(source)) {
+      const appCandidate = this.extractShortTitle(this.asString(point.applications[0] || point.questions[0] || point.summary || ''));
+      if (appCandidate && !labelPattern.test(appCandidate.toLowerCase())) {
+        return appCandidate;
+      }
+      if (titleCandidate && !labelPattern.test(titleCandidate.toLowerCase())) {
+        return titleCandidate;
+      }
+      return isSpanish ? 'Respuesta para hoy' : 'Response for today';
+    }
+    if (summaryCandidate && !labelPattern.test(summaryCandidate)) {
+      return summaryCandidate;
+    }
+    if (titleCandidate && !labelPattern.test(titleCandidate)) {
+      return titleCandidate;
+    }
+    return isSpanish ? `Respuesta para el punto ${index + 1}` : `Response for point ${index + 1}`;
+  }
+
   private generatePointSupportSlide(
     point: PointRecord,
     index: number,
@@ -1292,20 +1487,33 @@ export class SimpleDeckGenerationService {
     const isSpanish = this.isLikelySpanish(
       [point.title, point.summary, ...point.subpoints, ...point.applications].filter(Boolean).join(' ')
     );
+    const supportTitle = this.buildPointSupportTitle(point, index, isSpanish);
     const verses = point.supportingVerses.slice(0, 4);
     const illustrations = point.illustrations.slice(0, 2);
     const bullets = this.uniqueClean([
       ...verses.map((verse) => formatPresentationSentence(`${isSpanish ? 'Texto clave' : 'Key text'}: ${verse}`, 72)),
       ...illustrations.map((item) => formatPresentationSentence(`${isSpanish ? 'Ilustración' : 'Illustration'}: ${this.asString(item)}`, 72)),
       ...point.mediaSuggestions.slice(0, 1).map((item) => formatPresentationSentence(`${isSpanish ? 'Apoyo visual' : 'Visual support'}: ${this.asString(item)}`, 72)),
+      formatPresentationSentence(
+        isSpanish
+          ? `Conecta esta idea con "${this.limitText(point.title, 70)}".`
+          : `Connect this idea to "${this.limitText(point.title, 70)}".`,
+        72,
+      ),
+      formatPresentationSentence(
+        isSpanish
+          ? 'Muestra por qué este texto importa para la iglesia hoy.'
+          : 'Show why this text matters for the church today.',
+        72,
+      ),
     ]).slice(0, 5);
 
     return {
       type: SlideType.SUPPORT,
-      layoutKey: 'point_bullets_v1',
-      templateId: resolveTemplateId('point_bullets_v1', SlideType.SUPPORT),
+      layoutKey: 'support_verse',
+      templateId: resolveTemplateId('support_verse', SlideType.SUPPORT),
       content: {
-        title: `${index + 1}. ${isSpanish ? 'Soporte bíblico' : 'Biblical support'}`,
+        title: `${index + 1}. ${supportTitle}`,
         bullets: bullets.length > 0 ? bullets : [isSpanish ? 'Conectar el punto con el texto bíblico principal' : 'Connect this point to the primary biblical text'],
       },
       speakerNotes: isSpanish
@@ -1323,17 +1531,30 @@ export class SimpleDeckGenerationService {
     const isSpanish = this.isLikelySpanish(
       [point.title, point.summary, ...point.subpoints, ...point.applications].filter(Boolean).join(' ')
     );
+    const responseTitle = this.buildPointApplicationTitle(point, index, isSpanish);
     const bullets = this.uniqueClean([
       ...point.applications.map((item) => formatPresentationSentence(this.asString(item), 72)),
       ...point.questions.slice(0, 2).map((item) => formatPresentationSentence(`${isSpanish ? 'Pregunta' : 'Question'}: ${this.asString(item)}`, 72)),
+      formatPresentationSentence(
+        isSpanish
+          ? `Haz un paso pequeño pero claro relacionado con "${this.limitText(point.title, 70)}".`
+          : `Take one small but clear step related to "${this.limitText(point.title, 70)}".`,
+        72,
+      ),
+      formatPresentationSentence(
+        isSpanish
+          ? 'Habla con Dios sobre esta respuesta antes de actuar.'
+          : 'Talk with God about this response before you act.',
+        72,
+      ),
     ]).slice(0, 5);
 
     return {
       type: SlideType.APPLICATION,
-      layoutKey: 'application_bullets_v1',
-      templateId: resolveTemplateId('application_bullets_v1', SlideType.APPLICATION),
+      layoutKey: 'application_steps',
+      templateId: resolveTemplateId('application_steps', SlideType.APPLICATION),
       content: {
-        title: `${index + 1}. ${isSpanish ? 'Respuesta práctica' : 'Practical response'}`,
+        title: `${index + 1}. ${responseTitle}`,
         bullets: bullets.length > 0 ? bullets : [isSpanish ? `Aplicar "${point.title}" de forma concreta esta semana` : `Apply "${point.title}" in a concrete way this week`],
       },
       speakerNotes: isSpanish

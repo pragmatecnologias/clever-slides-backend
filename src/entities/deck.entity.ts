@@ -55,6 +55,9 @@ export class Deck {
   @Column({ type: 'jsonb', nullable: true })
   templatePlan: string[];
 
+  @Column({ type: 'jsonb', nullable: true })
+  composition?: Record<string, any>;
+
   @Column({
     type: 'varchar',
     nullable: false,
