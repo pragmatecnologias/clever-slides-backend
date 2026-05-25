@@ -9,6 +9,7 @@ import { DeckCompositionPlanner } from '../composition/deck-composition-planner.
 import { ImagePromptAssignmentService } from '../composition/image-prompt-assignment.service';
 import { DeckQualityValidator } from '../composition/deck-quality-validator.service';
 import { SermonDeckComposerService } from '../composition/sermon-deck-composer.service';
+import { TypographyService } from '../composition/typography.service';
 
 @Module({
   imports: [ConfigModule],
@@ -22,6 +23,7 @@ import { SermonDeckComposerService } from '../composition/sermon-deck-composer.s
     ImagePromptAssignmentService,
     DeckQualityValidator,
     SermonDeckComposerService,
+    TypographyService,
   ],
   exports: [
     LlmClient,
@@ -33,6 +35,7 @@ import { SermonDeckComposerService } from '../composition/sermon-deck-composer.s
     ImagePromptAssignmentService,
     DeckQualityValidator,
     SermonDeckComposerService,
+    TypographyService,
   ],
 })
 export class LlmModule {}
